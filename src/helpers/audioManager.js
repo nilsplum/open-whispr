@@ -400,7 +400,8 @@ class AudioManager {
     const useAgent = localStorage.getItem("useAgent") === "true";
     const useCorrection = localStorage.getItem("useCorrection") === "true";
 
-    const agentRegex = agentName ? new RegExp(`^(hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i') : null;
+    // Expanded wake words: hello, hi, hey, ok
+    const agentRegex = agentName ? new RegExp(`^(hello|hi|hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i') : null;
     const isAgentCommand = agentRegex ? agentRegex.test(normalizedText) : false;
 
     if (isAgentCommand && useAgent) {

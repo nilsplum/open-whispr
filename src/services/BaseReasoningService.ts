@@ -15,12 +15,12 @@ export abstract class BaseReasoningService {
    * Get reasoning prompt
    */
   protected getReasoningPrompt(
-    text: string, 
+    text: string,
     agentName: string | null,
     config: ReasoningConfig = {}
   ): string {
-    // Default prompts
-    const DEFAULT_AGENT_PROMPT = `You are {{agentName}}, a helpful AI assistant. Clean up the following dictated text by fixing grammar, punctuation, and formatting. Remove any reference to your name. Output ONLY the cleaned text without explanations or options:\n\n{{text}}`;
+    // Default prompts - AGENT mode should EXECUTE commands, not just clean text
+    const DEFAULT_AGENT_PROMPT = `You are {{agentName}}, a helpful AI assistant. The user has given you a command or request. Complete the request and provide ONLY your response, without any preamble, explanations, or reference to your name:\n\n{{text}}`;
     const DEFAULT_REGULAR_PROMPT = `Clean up the following dictated text by fixing grammar, punctuation, and formatting. Output ONLY the cleaned text without any explanations, options, or commentary:\n\n{{text}}`;
 
     let agentPrompt = DEFAULT_AGENT_PROMPT;
@@ -44,9 +44,10 @@ export abstract class BaseReasoningService {
       }
     }
 
-    // More robust prompt construction with regex
+    // Check if this is an agent command by presence of agent name
+    // No need to check wake words here - that's already done in audioManager
     if (agentName) {
-      const agentRegex = new RegExp(`^(hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i');
+      const agentRegex = new RegExp(`^(hello|hi|hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i');
       if (agentRegex.test(text)) {
         // Agent-based prompt - replace placeholders
         return agentPrompt
@@ -54,7 +55,7 @@ export abstract class BaseReasoningService {
           .replace(/\{\{text\}\}/g, text);
       }
     }
-    
+
     // Regular prompt - replace placeholders
     return regularPrompt.replace(/\{\{text\}\}/g, text);
   }

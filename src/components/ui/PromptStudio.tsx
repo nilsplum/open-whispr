@@ -317,7 +317,8 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
 
     const isAgentMode = (text: string, agent: string) => {
       if (!agent) return false;
-      const agentRegex = new RegExp(`^(hey|ok) ${agent.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i');
+      // Expanded wake words: hello, hi, hey, ok
+      const agentRegex = new RegExp(`^(hello|hi|hey|ok) ${agent.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i');
       return agentRegex.test(text);
     };
     

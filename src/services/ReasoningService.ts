@@ -6,8 +6,8 @@ import { API_ENDPOINTS, API_VERSIONS, TOKEN_LIMITS, buildApiUrl, normalizeBaseUr
 import logger from "../utils/logger";
 
 export const DEFAULT_PROMPTS = {
-  agent: `You are {{agentName}}, a helpful AI assistant. Process and improve the following text, removing any reference to your name from the output:\n\n{{text}}\n\nImproved text:`,
-  regular: `Process and improve the following text:\n\n{{text}}\n\nImproved text:`
+  agent: `You are {{agentName}}, a helpful AI assistant. The user has given you a command or request. Complete the request and provide ONLY your response, without any preamble, explanations, or reference to your name:\n\n{{text}}`,
+  regular: `Clean up the following dictated text by fixing grammar, punctuation, and formatting. Output ONLY the cleaned text without any explanations, options, or commentary:\n\n{{text}}`
 };
 
 class ReasoningService extends BaseReasoningService {
