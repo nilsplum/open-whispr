@@ -396,56 +396,156 @@ class AudioManager {
 
   async processTranscription(text, source) {
     const normalizedText = typeof text === "string" ? text.trim() : "";
-    const agentName = localStorage.getItem("agentName");
-    const useAgent = localStorage.getItem("useAgent") === "true";
-    const useCorrection = localStorage.getItem("useCorrection") === "true";
+    
+    if (!normalizedText) {
+      return normalizedText;
+    }
 
-    // Expanded wake words: hello, hi, hey, ok
-    const agentRegex = agentName ? new RegExp(`^(hello|hi|hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i') : null;
-    const isAgentCommand = agentRegex ? agentRegex.test(normalizedText) : false;
+    // Get all enabled agents from the new multi-agent system
+    const agents = this.getEnabledAgents();
+    
+    if (agents.length === 0) {
+      // No agents configured, return original text
+      return normalizedText;
+    }
 
-    if (isAgentCommand && useAgent) {
-      const modelToUse = localStorage.getItem("agentModel") || "gpt-4o-mini";
-      const agentProvider = getModelProvider(modelToUse);
-      const isConfigured = await this.isProviderConfigured(agentProvider);
-      if (isConfigured) {
-        try {
-          return await this.processWithReasoningModel(normalizedText, modelToUse, agentName);
-        } catch (error) {
-          this.onError?.({
-            title: "AI Agent Error",
-            description: error.message,
-          });
-          return normalizedText;
+    // First pass: Check agents with wake words
+    // Second pass: Use catch-all agent if no match
+    let catchAllAgent = null;
+    
+    // Loop through agents and find first match
+    for (const agent of agents) {
+      // Store catch-all agent (empty wake words) for later
+      if (!agent.wakeWords || agent.wakeWords.trim() === '') {
+        if (agent.enabled && !catchAllAgent) {
+          catchAllAgent = agent;
         }
-      } else {
+        continue; // Skip catch-all agents in first pass
+      }
+      
+      // Check if text matches this agent's wake words
+      try {
+        // Build a flexible wake word pattern:
+        // - Optional greeting prefix (hello, hi, hey, ok)
+        // - The wake word
+        // - Optional punctuation/separator (, or space)
+        // Example: "Jarvis" becomes /^(hello |hi |hey |ok )?\s*jarvis[\s,.]*/i
+        const escapedWakeWord = agent.wakeWords.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const flexiblePattern = `^(hello |hi |hey |ok )?\\s*${escapedWakeWord}[\\s,.]*`;
+        const wakeRegex = new RegExp(flexiblePattern, 'i');
+        
+        const match = normalizedText.match(wakeRegex);
+        if (match) {
+          // Found a match! Remove the wake word phrase from the text
+          const textWithoutWakeWord = normalizedText.substring(match[0].length).trim();
+          
+          // If nothing left after removing wake word, return original
+          if (!textWithoutWakeWord) {
+            return normalizedText;
+          }
+          
+          const provider = getModelProvider(agent.model);
+          const isConfigured = await this.isProviderConfigured(provider);
+          
+          if (!isConfigured) {
+            this.onError?.({
+              title: `${agent.name} Not Configured`,
+              description: `Please configure the ${provider} provider in settings to use "${agent.name}".`,
+            });
+            return normalizedText;
+          }
+          
+          try {
+            return await this.processWithAgent(textWithoutWakeWord, agent);
+          } catch (error) {
+            this.onError?.({
+              title: `${agent.name} Error`,
+              description: error.message,
+            });
+            return normalizedText;
+          }
+        }
+      } catch (regexError) {
+        console.error(`Invalid regex for agent ${agent.name}:`, regexError);
+        // Continue to next agent if regex is invalid
+        continue;
+      }
+    }
+    
+    // No specific agent matched, use catch-all agent if available
+    if (catchAllAgent) {
+      try {
+        return await this.processWithAgent(normalizedText, catchAllAgent);
+      } catch (error) {
         this.onError?.({
-          title: "Agent Not Configured",
-          description: `Please configure the ${agentProvider} provider in settings to use agent commands.`,
+          title: `${catchAllAgent.name} Error`,
+          description: error.message,
         });
         return normalizedText;
       }
     }
+    
+    // No agent matched at all, return original text
+    return normalizedText;
+  }
 
-    if (!isAgentCommand && useCorrection) {
-      const modelToUse = localStorage.getItem("correctionModel") || "gpt-4o-mini";
-      const correctionProvider = getModelProvider(modelToUse);
-      const isConfigured = await this.isProviderConfigured(correctionProvider);
-      if (isConfigured) {
-        try {
-          return await this.processWithReasoningModel(normalizedText, modelToUse, agentName);
-        } catch (error) {
-          this.onError?.({
-            title: "AI Correction Error",
-            description: error.message,
-          });
-          return normalizedText;
+  getEnabledAgents() {
+    try {
+      const stored = localStorage.getItem('agents');
+      if (!stored) {
+        return [];
+      }
+      
+      const agents = JSON.parse(stored);
+      return agents
+        .filter(a => a.enabled)
+        .sort((a, b) => a.order - b.order);
+    } catch (error) {
+      console.error('Failed to load agents:', error);
+      return [];
+    }
+  }
+
+  async processWithAgent(text, agent) {
+    logger.logReasoning("PROCESSING_WITH_AGENT", {
+      agentId: agent.id,
+      agentName: agent.name,
+      model: agent.model,
+      provider: agent.provider,
+      textLength: text.length
+    });
+
+    // Use agent's custom prompt
+    const prompt = agent.prompt
+      .replace(/\{\{agentName\}\}/g, agent.name)
+      .replace(/\{\{text\}\}/g, text);
+    
+    logger.logReasoning("AGENT_PROMPT_PREPARED", {
+      agentId: agent.id,
+      agentName: agent.name,
+      promptLength: prompt.length
+    });
+
+    // Process with agent's model using the custom prompt
+    const result = await ReasoningService.processText(
+      text, 
+      agent.model, 
+      agent.name,
+      {
+        customPrompts: {
+          agent: agent.prompt,
+          regular: agent.prompt // Use same prompt
         }
       }
-      // Don't show an error if correction is not configured, just fail silently.
-    }
+    );
     
-    return normalizedText;
+    logger.logReasoning("AGENT_PROCESSING_COMPLETE", {
+      agentId: agent.id,
+      agentName: agent.name,
+      resultLength: result.length
+    });
+
+    return result;
   }
 
   async processWithOpenAIAPI(audioBlob, metadata = {}) {

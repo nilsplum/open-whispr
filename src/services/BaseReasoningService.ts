@@ -13,25 +13,27 @@ export abstract class BaseReasoningService {
 
   /**
    * Get reasoning prompt
+   * Note: With the new multi-agent system, custom prompts are passed directly from agents.
+   * This method now primarily serves as a fallback and for the prompt replacement logic.
    */
   protected getReasoningPrompt(
     text: string,
     agentName: string | null,
     config: ReasoningConfig = {}
   ): string {
-    // Default prompts - AGENT mode should EXECUTE commands, not just clean text
+    // Default prompts - kept for backward compatibility
     const DEFAULT_AGENT_PROMPT = `You are {{agentName}}, a helpful AI assistant. The user has given you a command or request. Complete the request and provide ONLY your response, without any preamble, explanations, or reference to your name:\n\n{{text}}`;
     const DEFAULT_REGULAR_PROMPT = `Clean up the following dictated text by fixing grammar, punctuation, and formatting. Output ONLY the cleaned text without any explanations, options, or commentary:\n\n{{text}}`;
 
     let agentPrompt = DEFAULT_AGENT_PROMPT;
     let regularPrompt = DEFAULT_REGULAR_PROMPT;
 
-    // Use prompts from config if available (for testing in PromptStudio)
+    // Use prompts from config if available (for testing in PromptStudio or direct agent calls)
     if (config.customPrompts) {
       agentPrompt = config.customPrompts.agent || DEFAULT_AGENT_PROMPT;
       regularPrompt = config.customPrompts.regular || DEFAULT_REGULAR_PROMPT;
     } else if (typeof window !== 'undefined' && window.localStorage) {
-      // Fallback to localStorage for normal operation
+      // Fallback to localStorage for backward compatibility
       const customPrompts = window.localStorage.getItem('customPrompts');
       if (customPrompts) {
         try {
@@ -45,7 +47,8 @@ export abstract class BaseReasoningService {
     }
 
     // Check if this is an agent command by presence of agent name
-    // No need to check wake words here - that's already done in audioManager
+    // With the new multi-agent system, the wake word check is done in audioManager,
+    // so we just need to determine which prompt to use based on agentName presence
     if (agentName) {
       const agentRegex = new RegExp(`^(hello|hi|hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i');
       if (agentRegex.test(text)) {

@@ -37,7 +37,6 @@ import { getLanguageLabel, REASONING_PROVIDERS } from "../utils/languages";
 import LanguageSelector from "./ui/LanguageSelector";
 import { UnifiedModelPickerCompact } from "./UnifiedModelPicker";
 const InteractiveKeyboard = React.lazy(() => import("./ui/Keyboard"));
-import { setAgentName as saveAgentName } from "../utils/agentName";
 import { formatHotkeyLabel } from "../utils/hotkeys";
 import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl } from "../config/constants";
 
@@ -68,21 +67,20 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     whisperModel,
     preferredLanguage,
     cloudTranscriptionBaseUrl,
-    cloudReasoningBaseUrl,
-    useCorrection,
-    correctionModel,
     openaiApiKey,
     dictationKey,
     setUseLocalWhisper,
     setWhisperModel,
     setPreferredLanguage,
     setCloudTranscriptionBaseUrl,
-    setCloudReasoningBaseUrl,
     setDictationKey,
     updateTranscriptionSettings,
-    updateCorrectionSettings,
     updateApiKeys,
   } = useSettings();
+
+  // Local state for onboarding AI model selection
+  const [correctionModel, setCorrectionModel] = useState("gpt-4o-mini");
+  const [reasoningBaseUrl, setReasoningBaseUrl] = useState("");
 
   const [apiKey, setApiKey] = useState(openaiApiKey);
   const [hotkey, setHotkey] = useState(dictationKey || "`");
@@ -150,7 +148,6 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   };
 
   const [transcriptionBaseUrl, setTranscriptionBaseUrl] = useState(cloudTranscriptionBaseUrl);
-  const [reasoningBaseUrl, setReasoningBaseUrl] = useState(cloudReasoningBaseUrl);
   const [agentName, setAgentName] = useState("Agent");
   const readableHotkey = formatHotkeyLabel(hotkey);
   const {
@@ -314,7 +311,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         if (mappedModels.length === 0) {
           setCustomModelsError("No models returned by this endpoint.");
         } else if (!mappedModels.some((model) => model.value === reasoningModelRef.current)) {
-          updateCorrectionSettings({ correctionModel: mappedModels[0].value });
+          setCorrectionModel(mappedModels[0].value);
         }
       } catch (error) {
         if (isCancelled) {
@@ -338,15 +335,15 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       isCancelled = true;
       controller.abort();
     };
-  }, [usingCustomReasoningBase, normalizedReasoningBaseUrl, apiKey, updateCorrectionSettings]);
+  }, [usingCustomReasoningBase, normalizedReasoningBaseUrl, apiKey]);
 
   useEffect(() => {
     if (!usingCustomReasoningBase && defaultReasoningModels.length > 0) {
       if (!defaultReasoningModels.some((model) => model.value === correctionModel)) {
-        updateCorrectionSettings({ correctionModel: defaultReasoningModels[0].value });
+        setCorrectionModel(defaultReasoningModels[0].value);
       }
     }
-  }, [usingCustomReasoningBase, defaultReasoningModels, correctionModel, updateCorrectionSettings]);
+  }, [usingCustomReasoningBase, defaultReasoningModels, correctionModel]);
 
   const activeReasoningModelLabel = useMemo(() => {
     const match = displayedReasoningModels.find((model) => model.value === correctionModel);
@@ -419,27 +416,83 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
 
   const saveSettings = useCallback(async () => {
     const normalizedTranscriptionBase = (transcriptionBaseUrl || '').trim();
-    const normalizedReasoningBaseValue = (reasoningBaseUrl || '').trim();
 
     setCloudTranscriptionBaseUrl(normalizedTranscriptionBase);
-    setCloudReasoningBaseUrl(normalizedReasoningBaseValue);
 
     updateTranscriptionSettings({
       whisperModel,
       preferredLanguage,
       cloudTranscriptionBaseUrl: normalizedTranscriptionBase,
     });
-    updateCorrectionSettings({
-      useCorrection,
-      correctionModel,
-      cloudReasoningBaseUrl: normalizedReasoningBaseValue,
-    });
+    
+    // Save AI settings to the new agents system
+    // The migration in useAgents will create default agents if they don't exist
+    // Here we just need to update them with the onboarding choices
+    try {
+      let agents = [];
+      const storedAgents = localStorage.getItem('agents');
+      
+      if (storedAgents) {
+        agents = JSON.parse(storedAgents);
+      } else {
+        // Create default agents structure for first-time setup
+        agents = [
+          {
+            id: 'text-correction',
+            name: 'Text Correction',
+            wakeWords: '',
+            prompt: `Clean up the following dictated text by fixing grammar, punctuation, and formatting. Output ONLY the cleaned text without any explanations, options, or commentary:\n\n{{text}}`,
+            model: correctionModel,
+            provider: 'openai',
+            enabled: true,
+            isDefault: true,
+            order: 0
+          },
+          {
+            id: 'assistant',
+            name: agentName || 'Assistant',
+            wakeWords: agentName || 'Assistant',
+            prompt: `You are {{agentName}}, a helpful AI assistant. The user has given you a command or request. Complete the request and provide ONLY your response, without any preamble, explanations, or reference to your name:\n\n{{text}}`,
+            model: correctionModel,
+            provider: 'openai', // Will be auto-detected
+            enabled: true,
+            isDefault: true,
+            order: 1
+          }
+        ];
+      }
+      
+      // Update model for both agents
+      agents.forEach((agent: any) => {
+        if (agent.id === 'assistant' || agent.id === 'text-correction') {
+          agent.model = correctionModel;
+        }
+        if (agent.id === 'assistant') {
+          agent.name = agentName || 'Assistant';
+          agent.wakeWords = agentName || 'Assistant';
+        }
+      });
+      
+      localStorage.setItem('agents', JSON.stringify(agents));
+      
+      // Save agent name for future reference
+      localStorage.setItem('agentName', agentName || 'Assistant');
+      
+      // Save reasoning base URL if custom endpoint used
+      if (reasoningBaseUrl && reasoningBaseUrl.trim()) {
+        localStorage.setItem('cloudReasoningBaseUrl', reasoningBaseUrl.trim());
+      }
+    } catch (error) {
+      console.error('Failed to save agent settings:', error);
+    }
+    
     const hotkeyRegistered = await ensureHotkeyRegistered();
     if (!hotkeyRegistered) {
       return false;
     }
     setDictationKey(hotkey);
-    saveAgentName(agentName);
+    
+    // Agent name already saved above in the agents system
 
     localStorage.setItem(
       "micPermissionGranted",
@@ -463,6 +516,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     hotkey,
     preferredLanguage,
     agentName,
+    correctionModel,
     permissionsHook.micPermissionGranted,
     permissionsHook.accessibilityPermissionGranted,
     useLocalWhisper,
@@ -470,10 +524,8 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     transcriptionBaseUrl,
     reasoningBaseUrl,
     updateTranscriptionSettings,
-    updateCorrectionSettings,
     persistOpenAIKey,
     setCloudTranscriptionBaseUrl,
-    setCloudReasoningBaseUrl,
     setDictationKey,
     ensureHotkeyRegistered,
   ]);
@@ -854,7 +906,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                     models={displayedReasoningModels}
                     selectedModel={correctionModel}
                     onModelSelect={(modelId) =>
-                      updateCorrectionSettings({ correctionModel: modelId })
+                      setCorrectionModel(modelId)
                     }
                   />
                 </div>

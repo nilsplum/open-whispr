@@ -1,6 +1,5 @@
 import { useCallback } from "react";
 import { useLocalStorage } from "./useLocalStorage";
-import { getModelProvider } from "../utils/languages";
 import { API_ENDPOINTS } from "../config/constants";
 
 export interface TranscriptionSettings {
@@ -11,19 +10,6 @@ export interface TranscriptionSettings {
   fallbackWhisperModel: string;
   preferredLanguage: string;
   cloudTranscriptionBaseUrl?: string;
-}
-
-export interface CorrectionSettings {
-  useCorrection: boolean;
-  correctionModel: string;
-  correctionProvider: string;
-  cloudReasoningBaseUrl?: string;
-}
-
-export interface AgentSettings {
-  useAgent: boolean;
-  agentModel: string;
-  agentProvider: string;
 }
 
 export interface HotkeySettings {
@@ -100,53 +86,6 @@ export function useSettings() {
     }
   );
 
-  const [cloudReasoningBaseUrl, setCloudReasoningBaseUrl] = useLocalStorage(
-    "cloudReasoningBaseUrl",
-    API_ENDPOINTS.OPENAI_BASE,
-    {
-      serialize: String,
-      deserialize: String,
-    }
-  );
-
-  // Correction settings
-  const [useCorrection, setUseCorrection] = useLocalStorage(
-    "useCorrection",
-    true,
-    {
-      serialize: String,
-      deserialize: (value) => value !== "false", // Default true
-    }
-  );
-
-  const [correctionModel, setCorrectionModel] = useLocalStorage(
-    "correctionModel",
-    "gpt-4o-mini",
-    {
-      serialize: String,
-      deserialize: String,
-    }
-  );
-
-  // Agent settings
-  const [useAgent, setUseAgent] = useLocalStorage(
-    "useAgent",
-    true,
-    {
-      serialize: String,
-      deserialize: (value) => value !== "false", // Default true
-    }
-  );
-
-  const [agentModel, setAgentModel] = useLocalStorage(
-    "agentModel",
-    "gpt-4o-mini",
-    {
-      serialize: String,
-      deserialize: String,
-    }
-  );
-
   // API keys
   const [openaiApiKey, setOpenaiApiKey] = useLocalStorage("openaiApiKey", "", {
     serialize: String,
@@ -177,36 +116,24 @@ export function useSettings() {
     deserialize: String,
   });
 
-  // Computed values
-  const correctionProvider = getModelProvider(correctionModel);
-  const agentProvider = getModelProvider(agentModel);
-
-  const setProvider = (
-    provider: string,
-    setModel: (model: string) => void
-  ) => {
-    if (provider === "custom") {
-      return;
+  // Output behavior settings
+  const [copyToClipboard, setCopyToClipboard] = useLocalStorage(
+    "copyToClipboard",
+    true,
+    {
+      serialize: String,
+      deserialize: (value) => value === "true",
     }
+  );
 
-    const providerModels = {
-      openai: "gpt-4o-mini",
-      anthropic: "claude-3-5-sonnet-20241022",
-      gemini: "gemini-2.5-flash",
-      local: "llama-3.2-3b",
-    };
-    setModel(
-      providerModels[provider as keyof typeof providerModels] || "gpt-4o-mini"
-    );
-  };
-
-  const setCorrectionProvider = (provider: string) => {
-    setProvider(provider, setCorrectionModel);
-  };
-
-  const setAgentProvider = (provider: string) => {
-    setProvider(provider, setAgentModel);
-  };
+  const [pasteAfterTranscription, setPasteAfterTranscription] = useLocalStorage(
+    "pasteAfterTranscription",
+    true,
+    {
+      serialize: String,
+      deserialize: (value) => value === "true",
+    }
+  );
 
   // Batch operations
   const updateTranscriptionSettings = useCallback(
@@ -237,26 +164,6 @@ export function useSettings() {
     ]
   );
 
-  const updateCorrectionSettings = useCallback(
-    (settings: Partial<CorrectionSettings>) => {
-      if (settings.useCorrection !== undefined)
-        setUseCorrection(settings.useCorrection);
-      if (settings.correctionModel !== undefined)
-        setCorrectionModel(settings.correctionModel);
-      if (settings.cloudReasoningBaseUrl !== undefined)
-        setCloudReasoningBaseUrl(settings.cloudReasoningBaseUrl);
-    },
-    [setUseCorrection, setCorrectionModel, setCloudReasoningBaseUrl]
-  );
-
-  const updateAgentSettings = useCallback(
-    (settings: Partial<AgentSettings>) => {
-      if (settings.useAgent !== undefined) setUseAgent(settings.useAgent);
-      if (settings.agentModel !== undefined) setAgentModel(settings.agentModel);
-    },
-    [setUseAgent, setAgentModel]
-  );
-
   const updateApiKeys = useCallback(
     (keys: Partial<ApiKeySettings>) => {
       if (keys.openaiApiKey !== undefined) setOpenaiApiKey(keys.openaiApiKey);
@@ -275,17 +182,12 @@ export function useSettings() {
     fallbackWhisperModel,
     preferredLanguage,
     cloudTranscriptionBaseUrl,
-    cloudReasoningBaseUrl,
-    useCorrection,
-    correctionModel,
-    correctionProvider,
-    useAgent,
-    agentModel,
-    agentProvider,
     openaiApiKey,
     anthropicApiKey,
     geminiApiKey,
     dictationKey,
+    copyToClipboard,
+    pasteAfterTranscription,
     setUseLocalWhisper,
     setWhisperModel,
     setAllowOpenAIFallback,
@@ -293,20 +195,13 @@ export function useSettings() {
     setFallbackWhisperModel,
     setPreferredLanguage,
     setCloudTranscriptionBaseUrl,
-    setCloudReasoningBaseUrl,
-    setUseCorrection,
-    setCorrectionModel,
-    setUseAgent,
-    setAgentModel,
-    setCorrectionProvider,
-    setAgentProvider,
     setOpenaiApiKey,
     setAnthropicApiKey,
     setGeminiApiKey,
     setDictationKey,
+    setCopyToClipboard,
+    setPasteAfterTranscription,
     updateTranscriptionSettings,
-    updateCorrectionSettings,
-    updateAgentSettings,
     updateApiKeys,
   };
 }

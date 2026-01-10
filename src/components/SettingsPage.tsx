@@ -8,24 +8,21 @@ import ApiKeyInput from "./ui/ApiKeyInput";
 import { ConfirmDialog, AlertDialog } from "./ui/dialog";
 import { useSettings } from "../hooks/useSettings";
 import { useDialogs } from "../hooks/useDialogs";
-import { useAgentName } from "../utils/agentName";
 import { useWhisper } from "../hooks/useWhisper";
 import { usePermissions } from "../hooks/usePermissions";
 import { useClipboard } from "../hooks/useClipboard";
 import { REASONING_PROVIDERS } from "../utils/languages";
 import { formatHotkeyLabel } from "../utils/hotkeys";
 import LanguageSelector from "./ui/LanguageSelector";
-import PromptStudio from "./ui/PromptStudio";
 import { API_ENDPOINTS } from "../config/constants";
-import AIModelConfig from "./AIModelConfig";
+import AgentsPanel from "./AgentsPanel";
 import type { UpdateInfoResult } from "../types/electron";
 const InteractiveKeyboard = React.lazy(() => import("./ui/Keyboard"));
 
 export type SettingsSectionType =
   | "general"
   | "transcription"
-  | "aiModels"
-  | "prompts";
+  | "agents";
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
@@ -52,17 +49,12 @@ export default function SettingsPage({
     fallbackWhisperModel,
     preferredLanguage,
     cloudTranscriptionBaseUrl,
-    cloudReasoningBaseUrl,
-    useCorrection,
-    correctionModel,
-    correctionProvider,
-    useAgent,
-    agentModel,
-    agentProvider,
     openaiApiKey,
     anthropicApiKey,
     geminiApiKey,
     dictationKey,
+    copyToClipboard,
+    pasteAfterTranscription,
     setUseLocalWhisper,
     setWhisperModel,
     setAllowOpenAIFallback,
@@ -70,20 +62,13 @@ export default function SettingsPage({
     setFallbackWhisperModel,
     setPreferredLanguage,
     setCloudTranscriptionBaseUrl,
-    setCloudReasoningBaseUrl,
-    setUseCorrection,
-    setCorrectionModel,
-    setUseAgent,
-    setAgentModel,
-    setProvider: setCorrectionProvider,
-    setAgentProvider,
     setOpenaiApiKey,
     setAnthropicApiKey,
     setGeminiApiKey,
     setDictationKey,
+    setCopyToClipboard,
+    setPasteAfterTranscription,
     updateTranscriptionSettings,
-    updateCorrectionSettings,
-    updateAgentSettings,
     updateApiKeys,
   } = useSettings();
 
@@ -116,7 +101,6 @@ export default function SettingsPage({
   const whisperHook = useWhisper(showAlertDialog);
   const permissionsHook = usePermissions(showAlertDialog);
   const { pasteFromClipboardWithFallback } = useClipboard(showAlertDialog);
-  const { agentName, setAgentName } = useAgentName();
   const installTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const subscribeToUpdates = useCallback(() => {
@@ -281,61 +265,6 @@ export default function SettingsPage({
     };
   }, [installInitiated, showAlertDialog]);
 
-  const saveAiSettings = useCallback(async () => {
-    const normalizedReasoningBase = (cloudReasoningBaseUrl || '').trim();
-    setCloudReasoningBaseUrl(normalizedReasoningBase);
-
-    updateCorrectionSettings({ 
-      useCorrection, 
-      correctionModel,
-      cloudReasoningBaseUrl: normalizedReasoningBase
-    });
-    
-    updateAgentSettings({
-      useAgent,
-      agentModel,
-    });
-
-    // Save all configured API keys regardless of feature enabled state
-    // This prevents keys from being lost when features are temporarily disabled
-    if (openaiApiKey && openaiApiKey.trim()) {
-      await window.electronAPI?.saveOpenAIKey(openaiApiKey);
-    }
-    if (anthropicApiKey && anthropicApiKey.trim()) {
-      await window.electronAPI?.saveAnthropicKey(anthropicApiKey);
-    }
-    if (geminiApiKey && geminiApiKey.trim()) {
-      await window.electronAPI?.saveGeminiKey(geminiApiKey);
-    }
-
-    updateApiKeys({
-      ...(openaiApiKey.trim() && { openaiApiKey }),
-      ...(anthropicApiKey.trim() && { anthropicApiKey }),
-      ...(geminiApiKey.trim() && { geminiApiKey }),
-    });
-
-    showAlertDialog({
-      title: "AI Settings Saved",
-      description: "Your AI agent and text correction settings have been updated.",
-    });
-  }, [
-    useCorrection,
-    correctionModel,
-    useAgent,
-    agentModel,
-    agentProvider,
-    correctionProvider,
-    openaiApiKey,
-    anthropicApiKey,
-    geminiApiKey,
-    updateCorrectionSettings,
-    updateAgentSettings,
-    updateApiKeys,
-    showAlertDialog,
-    cloudReasoningBaseUrl,
-    setCloudReasoningBaseUrl,
-  ]);
-  
   const saveApiKey = useCallback(async () => {
     try {
       // Save all API keys to backend
@@ -844,6 +773,71 @@ export default function SettingsPage({
               </div>
             </div>
 
+            {/* Output Behavior Section */}
+            <div className="border-t pt-8">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  Output Behavior
+                </h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  Control how transcribed text is handled after processing.
+                </p>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                  <div className="flex-1">
+                    <label className="text-sm font-medium text-gray-900 cursor-pointer">
+                      Copy to Clipboard
+                    </label>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Automatically copy transcribed text to clipboard for easy pasting
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer ml-4">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={copyToClipboard}
+                      onChange={(e) => setCopyToClipboard(e.target.checked)}
+                    />
+                    <div className={`w-11 h-6 bg-gray-200 rounded-full transition-colors duration-200 ${
+                      copyToClipboard ? "bg-green-600" : "bg-gray-300"
+                    }`}>
+                      <div className={`absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ${
+                        copyToClipboard ? "translate-x-5" : "translate-x-0"
+                      }`} />
+                    </div>
+                  </label>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
+                  <div className="flex-1">
+                    <label className="text-sm font-medium text-gray-900 cursor-pointer">
+                      Auto-Paste Text
+                    </label>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Automatically paste text at cursor position after transcription
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer ml-4">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={pasteAfterTranscription}
+                      onChange={(e) => setPasteAfterTranscription(e.target.checked)}
+                    />
+                    <div className={`w-11 h-6 bg-gray-200 rounded-full transition-colors duration-200 ${
+                      pasteAfterTranscription ? "bg-green-600" : "bg-gray-300"
+                    }`}>
+                      <div className={`absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ${
+                        pasteAfterTranscription ? "translate-x-5" : "translate-x-0"
+                      }`} />
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
             {/* About Section */}
             <div className="border-t pt-8">
               <div>
@@ -1093,115 +1087,13 @@ export default function SettingsPage({
         </div>
       );
 
-      case "aiModels":
+      case "agents":
         return (
           <div className="space-y-8">
-            <div className="space-y-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                AI Agent
-              </h3>
-              <p className="text-sm text-gray-600 mb-6">
-                Configure your AI assistant's name and the model it uses for commands.
-              </p>
-              <div className="space-y-4 p-4 bg-gray-50 border border-gray-200 rounded-xl">
-                <h4 className="font-medium text-gray-900">Agent Name</h4>
-                <div className="flex gap-3">
-                  <Input
-                    placeholder="e.g., Assistant, Jarvis, Alex..."
-                    value={agentName}
-                    onChange={(e) => setAgentName(e.target.value)}
-                    className="flex-1 text-center text-lg font-mono"
-                  />
-                  <Button
-                    onClick={() => {
-                      setAgentName(agentName.trim());
-                      showAlertDialog({
-                        title: "Agent Name Updated",
-                        description: `Your agent is now named "${agentName.trim()}". You can address it by saying "Hey ${agentName.trim()}" followed by your instructions.`,
-                      });
-                    }}
-                    disabled={!agentName.trim()}
-                  >
-                    Save
-                  </Button>
-                </div>
-                <p className="text-xs text-gray-600 mt-2">
-                  Choose a name that feels natural to say and remember.
-                </p>
-              </div>
-              <AIModelConfig
-                title="Enable AI Agent"
-                description="Use the agent to perform tasks by calling its name."
-                useFeature={useAgent}
-                setUseFeature={setUseAgent}
-                model={agentModel}
-                setModel={setAgentModel}
-                provider={agentProvider}
-                setProvider={setAgentProvider}
-                cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-                setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-                openaiApiKey={openaiApiKey}
-                setOpenaiApiKey={setOpenaiApiKey}
-                anthropicApiKey={anthropicApiKey}
-                setAnthropicApiKey={setAnthropicApiKey}
-                geminiApiKey={geminiApiKey}
-                setGeminiApiKey={setGeminiApiKey}
-                pasteFromClipboard={pasteFromClipboardWithFallback}
-                showAlertDialog={showAlertDialog}
-              />
-            </div>
-
-            <div className="space-y-6 border-t pt-8">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Text Correction
-              </h3>
-              <p className="text-sm text-gray-600 mb-6">
-                Configure how AI models clean up and format your transcriptions automatically.
-              </p>
-              <AIModelConfig
-                title="Enable AI Text Correction"
-                description="Use AI to automatically improve transcription quality."
-                useFeature={useCorrection}
-                setUseFeature={setUseCorrection}
-                model={correctionModel}
-                setModel={setCorrectionModel}
-                provider={correctionProvider}
-                setProvider={setCorrectionProvider}
-                cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-                setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-                openaiApiKey={openaiApiKey}
-                setOpenaiApiKey={setOpenaiApiKey}
-                anthropicApiKey={anthropicApiKey}
-                setAnthropicApiKey={setAnthropicApiKey}
-                geminiApiKey={geminiApiKey}
-                setGeminiApiKey={setGeminiApiKey}
-                pasteFromClipboard={pasteFromClipboardWithFallback}
-                showAlertDialog={showAlertDialog}
-              />
-            </div>
-
-            <Button onClick={saveAiSettings} className="w-full">
-              Save AI Settings
-            </Button>
-          </div>
-        );
-
-
-
-      case "prompts":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                AI Prompt Management
-              </h3>
-              <p className="text-sm text-gray-600 mb-6">
-                View and customize the prompts that power OpenWhispr's AI text processing. 
-                Adjust these to change how your transcriptions are formatted and enhanced.
-              </p>
-            </div>
-            
-            <PromptStudio />
+            <AgentsPanel 
+              showAlertDialog={showAlertDialog}
+              pasteFromClipboard={pasteFromClipboardWithFallback}
+            />
           </div>
         );
       default:

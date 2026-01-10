@@ -141,6 +141,10 @@ class IPCHandlers {
       return this.clipboardManager.writeClipboard(text);
     });
 
+    ipcMain.handle("copy-to-clipboard", async (event, text) => {
+      return this.clipboardManager.writeClipboard(text);
+    });
+
     // Whisper handlers
     ipcMain.handle(
       "transcribe-local-whisper",

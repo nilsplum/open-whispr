@@ -15,9 +15,7 @@ export default function SettingsModal({
   const sidebarItems: SidebarItem<SettingsSectionType>[] = [
     { id: "general", label: "General", icon: Settings },
     { id: "transcription", label: "Transcription Mode", icon: Mic },
-    { id: "aiModels", label: "AI Models", icon: Brain },
-    { id: "agentConfig", label: "Agent Configuration", icon: User },
-    { id: "prompts", label: "AI Prompts", icon: Sparkles },
+    { id: "agents", label: "Agents", icon: Brain },
   ];
 
   const [activeSection, setActiveSection] =

@@ -29,8 +29,23 @@ export const useAudioRecording = (toast, options = {}) => {
         if (result.success) {
           setTranscript(result.text);
 
-          // Paste immediately
-          await audioManagerRef.current.safePaste(result.text);
+          // Get output behavior settings
+          const copyToClipboard = localStorage.getItem("copyToClipboard") !== "false";
+          const pasteAfterTranscription = localStorage.getItem("pasteAfterTranscription") !== "false";
+
+          // Copy to clipboard if enabled
+          if (copyToClipboard) {
+            try {
+              await window.electronAPI.copyToClipboard(result.text);
+            } catch (error) {
+              console.warn("Failed to copy to clipboard:", error);
+            }
+          }
+
+          // Paste if enabled
+          if (pasteAfterTranscription) {
+            await audioManagerRef.current.safePaste(result.text);
+          }
 
           // Save to database in parallel
           audioManagerRef.current.saveTranscription(result.text);
