@@ -13,11 +13,17 @@ export interface TranscriptionSettings {
   cloudTranscriptionBaseUrl?: string;
 }
 
-export interface ReasoningSettings {
-  useReasoningModel: boolean;
-  reasoningModel: string;
-  reasoningProvider: string;
+export interface CorrectionSettings {
+  useCorrection: boolean;
+  correctionModel: string;
+  correctionProvider: string;
   cloudReasoningBaseUrl?: string;
+}
+
+export interface AgentSettings {
+  useAgent: boolean;
+  agentModel: string;
+  agentProvider: string;
 }
 
 export interface HotkeySettings {
@@ -103,9 +109,9 @@ export function useSettings() {
     }
   );
 
-  // Reasoning settings
-  const [useReasoningModel, setUseReasoningModel] = useLocalStorage(
-    "useReasoningModel",
+  // Correction settings
+  const [useCorrection, setUseCorrection] = useLocalStorage(
+    "useCorrection",
     true,
     {
       serialize: String,
@@ -113,8 +119,27 @@ export function useSettings() {
     }
   );
 
-  const [reasoningModel, setReasoningModel] = useLocalStorage(
-    "reasoningModel",
+  const [correctionModel, setCorrectionModel] = useLocalStorage(
+    "correctionModel",
+    "gpt-4o-mini",
+    {
+      serialize: String,
+      deserialize: String,
+    }
+  );
+
+  // Agent settings
+  const [useAgent, setUseAgent] = useLocalStorage(
+    "useAgent",
+    true,
+    {
+      serialize: String,
+      deserialize: (value) => value !== "false", // Default true
+    }
+  );
+
+  const [agentModel, setAgentModel] = useLocalStorage(
+    "agentModel",
     "gpt-4o-mini",
     {
       serialize: String,
@@ -153,7 +178,35 @@ export function useSettings() {
   });
 
   // Computed values
-  const reasoningProvider = getModelProvider(reasoningModel);
+  const correctionProvider = getModelProvider(correctionModel);
+  const agentProvider = getModelProvider(agentModel);
+
+  const setProvider = (
+    provider: string,
+    setModel: (model: string) => void
+  ) => {
+    if (provider === "custom") {
+      return;
+    }
+
+    const providerModels = {
+      openai: "gpt-4o-mini",
+      anthropic: "claude-3-5-sonnet-20241022",
+      gemini: "gemini-2.5-flash",
+      local: "llama-3.2-3b",
+    };
+    setModel(
+      providerModels[provider as keyof typeof providerModels] || "gpt-4o-mini"
+    );
+  };
+
+  const setCorrectionProvider = (provider: string) => {
+    setProvider(provider, setCorrectionModel);
+  };
+
+  const setAgentProvider = (provider: string) => {
+    setProvider(provider, setAgentModel);
+  };
 
   // Batch operations
   const updateTranscriptionSettings = useCallback(
@@ -184,17 +237,24 @@ export function useSettings() {
     ]
   );
 
-  const updateReasoningSettings = useCallback(
-    (settings: Partial<ReasoningSettings>) => {
-      if (settings.useReasoningModel !== undefined)
-        setUseReasoningModel(settings.useReasoningModel);
-      if (settings.reasoningModel !== undefined)
-        setReasoningModel(settings.reasoningModel);
+  const updateCorrectionSettings = useCallback(
+    (settings: Partial<CorrectionSettings>) => {
+      if (settings.useCorrection !== undefined)
+        setUseCorrection(settings.useCorrection);
+      if (settings.correctionModel !== undefined)
+        setCorrectionModel(settings.correctionModel);
       if (settings.cloudReasoningBaseUrl !== undefined)
         setCloudReasoningBaseUrl(settings.cloudReasoningBaseUrl);
-      // reasoningProvider is computed from reasoningModel, not stored separately
     },
-    [setUseReasoningModel, setReasoningModel, setCloudReasoningBaseUrl]
+    [setUseCorrection, setCorrectionModel, setCloudReasoningBaseUrl]
+  );
+
+  const updateAgentSettings = useCallback(
+    (settings: Partial<AgentSettings>) => {
+      if (settings.useAgent !== undefined) setUseAgent(settings.useAgent);
+      if (settings.agentModel !== undefined) setAgentModel(settings.agentModel);
+    },
+    [setUseAgent, setAgentModel]
   );
 
   const updateApiKeys = useCallback(
@@ -202,8 +262,7 @@ export function useSettings() {
       if (keys.openaiApiKey !== undefined) setOpenaiApiKey(keys.openaiApiKey);
       if (keys.anthropicApiKey !== undefined)
         setAnthropicApiKey(keys.anthropicApiKey);
-      if (keys.geminiApiKey !== undefined)
-        setGeminiApiKey(keys.geminiApiKey);
+      if (keys.geminiApiKey !== undefined) setGeminiApiKey(keys.geminiApiKey);
     },
     [setOpenaiApiKey, setAnthropicApiKey, setGeminiApiKey]
   );
@@ -217,9 +276,12 @@ export function useSettings() {
     preferredLanguage,
     cloudTranscriptionBaseUrl,
     cloudReasoningBaseUrl,
-    useReasoningModel,
-    reasoningModel,
-    reasoningProvider,
+    useCorrection,
+    correctionModel,
+    correctionProvider,
+    useAgent,
+    agentModel,
+    agentProvider,
     openaiApiKey,
     anthropicApiKey,
     geminiApiKey,
@@ -232,30 +294,19 @@ export function useSettings() {
     setPreferredLanguage,
     setCloudTranscriptionBaseUrl,
     setCloudReasoningBaseUrl,
-    setUseReasoningModel,
-    setReasoningModel,
-    setReasoningProvider: (provider: string) => {
-      if (provider === 'custom') {
-        return;
-      }
-
-      const providerModels = {
-        openai: "gpt-4o-mini", // Start with cost-efficient multimodal model
-        anthropic: "claude-3.5-sonnet-20241022",
-        gemini: "gemini-2.5-flash",
-        local: "llama-3.2-3b",
-      };
-      setReasoningModel(
-        providerModels[provider as keyof typeof providerModels] ||
-          "gpt-4o-mini"
-      );
-    },
+    setUseCorrection,
+    setCorrectionModel,
+    setUseAgent,
+    setAgentModel,
+    setCorrectionProvider,
+    setAgentProvider,
     setOpenaiApiKey,
     setAnthropicApiKey,
     setGeminiApiKey,
     setDictationKey,
     updateTranscriptionSettings,
-    updateReasoningSettings,
+    updateCorrectionSettings,
+    updateAgentSettings,
     updateApiKeys,
   };
 }

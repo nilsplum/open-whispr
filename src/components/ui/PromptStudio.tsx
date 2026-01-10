@@ -314,6 +314,12 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
     const providerEndpoint = providerConfig.baseStorageKey
       ? (localStorage.getItem(providerConfig.baseStorageKey) || "").trim()
       : "";
+
+    const isAgentMode = (text: string, agent: string) => {
+      if (!agent) return false;
+      const agentRegex = new RegExp(`^(hey|ok) ${agent.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i');
+      return agentRegex.test(text);
+    };
     
     return (
       <div className="space-y-6">
@@ -373,11 +379,11 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
                 </p>
                 {testText && (
                   <span className={`text-xs px-2 py-1 rounded-full ${
-                    testText.toLowerCase().includes(agentName.toLowerCase())
+                    isAgentMode(testText, agentName)
                       ? "bg-purple-100 text-purple-700"
                       : "bg-green-100 text-green-700"
                   }`}>
-                    {testText.toLowerCase().includes(agentName.toLowerCase())
+                    {isAgentMode(testText, agentName)
                       ? "🤖 Agent Mode"
                       : "✨ Regular Mode"}
                   </span>

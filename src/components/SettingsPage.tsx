@@ -17,7 +17,7 @@ import { formatHotkeyLabel } from "../utils/hotkeys";
 import LanguageSelector from "./ui/LanguageSelector";
 import PromptStudio from "./ui/PromptStudio";
 import { API_ENDPOINTS } from "../config/constants";
-import AIModelSelectorEnhanced from "./AIModelSelectorEnhanced";
+import AIModelConfig from "./AIModelConfig";
 import type { UpdateInfoResult } from "../types/electron";
 const InteractiveKeyboard = React.lazy(() => import("./ui/Keyboard"));
 
@@ -25,7 +25,6 @@ export type SettingsSectionType =
   | "general"
   | "transcription"
   | "aiModels"
-  | "agentConfig"
   | "prompts";
 
 interface SettingsPageProps {
@@ -54,9 +53,12 @@ export default function SettingsPage({
     preferredLanguage,
     cloudTranscriptionBaseUrl,
     cloudReasoningBaseUrl,
-    useReasoningModel,
-    reasoningModel,
-    reasoningProvider,
+    useCorrection,
+    correctionModel,
+    correctionProvider,
+    useAgent,
+    agentModel,
+    agentProvider,
     openaiApiKey,
     anthropicApiKey,
     geminiApiKey,
@@ -69,15 +71,19 @@ export default function SettingsPage({
     setPreferredLanguage,
     setCloudTranscriptionBaseUrl,
     setCloudReasoningBaseUrl,
-    setUseReasoningModel,
-    setReasoningModel,
-    setReasoningProvider,
+    setUseCorrection,
+    setCorrectionModel,
+    setUseAgent,
+    setAgentModel,
+    setProvider: setCorrectionProvider,
+    setAgentProvider,
     setOpenaiApiKey,
     setAnthropicApiKey,
     setGeminiApiKey,
     setDictationKey,
     updateTranscriptionSettings,
-    updateReasoningSettings,
+    updateCorrectionSettings,
+    updateAgentSettings,
     updateApiKeys,
   } = useSettings();
 
@@ -201,11 +207,6 @@ export default function SettingsPage({
     };
   }, [showAlertDialog]);
 
-  // Local state for provider selection (overrides computed value)
-  const [localReasoningProvider, setLocalReasoningProvider] = useState(() => {
-    return localStorage.getItem("reasoningProvider") || reasoningProvider;
-  });
-
   // Defer heavy operations for better performance
   useEffect(() => {
     let mounted = true;
@@ -280,66 +281,61 @@ export default function SettingsPage({
     };
   }, [installInitiated, showAlertDialog]);
 
-  const saveReasoningSettings = useCallback(async () => {
+  const saveAiSettings = useCallback(async () => {
     const normalizedReasoningBase = (cloudReasoningBaseUrl || '').trim();
     setCloudReasoningBaseUrl(normalizedReasoningBase);
 
-    // Update reasoning settings
-    updateReasoningSettings({ 
-      useReasoningModel, 
-      reasoningModel,
+    updateCorrectionSettings({ 
+      useCorrection, 
+      correctionModel,
       cloudReasoningBaseUrl: normalizedReasoningBase
     });
     
-    // Save API keys to backend based on provider
-    if (localReasoningProvider === "openai" && openaiApiKey) {
+    updateAgentSettings({
+      useAgent,
+      agentModel,
+    });
+
+    // Save all configured API keys regardless of feature enabled state
+    // This prevents keys from being lost when features are temporarily disabled
+    if (openaiApiKey && openaiApiKey.trim()) {
       await window.electronAPI?.saveOpenAIKey(openaiApiKey);
     }
-    if (localReasoningProvider === "anthropic" && anthropicApiKey) {
+    if (anthropicApiKey && anthropicApiKey.trim()) {
       await window.electronAPI?.saveAnthropicKey(anthropicApiKey);
     }
-    if (localReasoningProvider === "gemini" && geminiApiKey) {
+    if (geminiApiKey && geminiApiKey.trim()) {
       await window.electronAPI?.saveGeminiKey(geminiApiKey);
     }
-    
-    updateApiKeys({
-      ...(localReasoningProvider === "openai" &&
-        openaiApiKey.trim() && { openaiApiKey }),
-      ...(localReasoningProvider === "anthropic" &&
-        anthropicApiKey.trim() && { anthropicApiKey }),
-      ...(localReasoningProvider === "gemini" &&
-        geminiApiKey.trim() && { geminiApiKey }),
-    });
-    
-    // Save the provider separately since it's computed from the model
-    localStorage.setItem("reasoningProvider", localReasoningProvider);
 
-    const providerLabel =
-      localReasoningProvider === 'custom'
-        ? 'Custom'
-        : REASONING_PROVIDERS[
-            localReasoningProvider as keyof typeof REASONING_PROVIDERS
-          ]?.name || localReasoningProvider;
+    updateApiKeys({
+      ...(openaiApiKey.trim() && { openaiApiKey }),
+      ...(anthropicApiKey.trim() && { anthropicApiKey }),
+      ...(geminiApiKey.trim() && { geminiApiKey }),
+    });
 
     showAlertDialog({
-      title: "Reasoning Settings Saved",
-      description: `AI text enhancement ${
-        useReasoningModel ? "enabled" : "disabled"
-      } with ${
-        providerLabel
-      } ${reasoningModel}`,
+      title: "AI Settings Saved",
+      description: "Your AI agent and text correction settings have been updated.",
     });
   }, [
-    useReasoningModel,
-    reasoningModel,
-    localReasoningProvider,
+    useCorrection,
+    correctionModel,
+    useAgent,
+    agentModel,
+    agentProvider,
+    correctionProvider,
     openaiApiKey,
     anthropicApiKey,
-    updateReasoningSettings,
+    geminiApiKey,
+    updateCorrectionSettings,
+    updateAgentSettings,
     updateApiKeys,
     showAlertDialog,
+    cloudReasoningBaseUrl,
+    setCloudReasoningBaseUrl,
   ]);
-
+  
   const saveApiKey = useCallback(async () => {
     try {
       // Save all API keys to backend
@@ -492,6 +488,68 @@ export default function SettingsPage({
       },
     });
   }, [isRemovingModels, cachePathHint, showConfirmDialog, showAlertDialog]);
+
+  const handleHotkeyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const { code, ctrlKey, altKey, shiftKey, metaKey } = e;
+
+    // Ignore modifier-only key presses
+    if (['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(code)) {
+        return;
+    }
+
+    const parts = [];
+    // Use a consistent order for modifiers
+    if (metaKey) parts.push("Command");
+    if (ctrlKey) parts.push("Control");
+    if (altKey) parts.push("Alt");
+    if (shiftKey) parts.push("Shift");
+
+    // Map special keys to friendly names
+    const keyMap: Record<string, string> = {
+      'ArrowUp': 'Up',
+      'ArrowDown': 'Down',
+      'ArrowLeft': 'Left',
+      'ArrowRight': 'Right',
+      'Escape': 'Esc',
+      'Backspace': 'Backspace',
+      'Tab': 'Tab',
+      'Space': 'Space',
+      'Enter': 'Enter',
+      'Delete': 'Delete',
+      'Home': 'Home',
+      'End': 'End',
+      'PageUp': 'PageUp',
+      'PageDown': 'PageDown',
+      'Insert': 'Insert',
+    };
+
+    let keyStr = code;
+
+    if (keyStr.startsWith('Key')) {
+      keyStr = keyStr.substring(3);
+    } else if (keyStr.startsWith('Digit')) {
+      keyStr = keyStr.substring(5);
+    } else if (keyStr.startsWith('Numpad')) {
+      keyStr = `Numpad${keyStr.substring(6)}`;
+    } else if (keyStr.startsWith('F') && /^F\d+$/.test(keyStr)) {
+      // Function keys (F1-F12) stay as-is
+    } else if (keyMap[keyStr]) {
+      keyStr = keyMap[keyStr];
+    }
+
+    // Don't add modifiers as the main key
+    if (!['Control', 'Alt', 'Shift', 'Command', 'Meta'].includes(keyStr)) {
+      parts.push(keyStr);
+    }
+
+    // A hotkey must have a main key.
+    if (parts.length > 0 && !['Control', 'Alt', 'Shift', 'Command'].includes(parts[parts.length - 1])) {
+      setDictationKey(parts.join('+'));
+    }
+  };
 
   const renderSectionContent = () => {
     switch (activeSection) {
@@ -718,7 +776,7 @@ export default function SettingsPage({
                   Dictation Hotkey
                 </h3>
                 <p className="text-sm text-gray-600 mb-6">
-                  Configure the key you press to start and stop voice dictation.
+                  Configure the key combination you press to start and stop voice dictation.
                 </p>
               </div>
               <div className="space-y-4">
@@ -727,31 +785,15 @@ export default function SettingsPage({
                     Activation Key
                   </label>
                   <Input
-                    placeholder="Default: ` (backtick)"
-                    value={dictationKey}
-                    onChange={(e) => setDictationKey(e.target.value)}
+                    placeholder="Click here and press a key combination"
+                    value={formatHotkeyLabel(dictationKey)}
+                    onKeyDown={handleHotkeyKeyDown}
+                    readOnly
                     className="text-center text-lg font-mono"
                   />
                   <p className="text-xs text-gray-500 mt-2">
-                    Press this key from anywhere to start/stop dictation
+                    Press a key combination (e.g., Control + D) to set it as your hotkey.
                   </p>
-                </div>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-3">
-                    Click any key to select it:
-                  </h4>
-                  <React.Suspense
-                    fallback={
-                      <div className="h-32 flex items-center justify-center text-gray-500">
-                        Loading keyboard...
-                      </div>
-                    }
-                  >
-                    <InteractiveKeyboard
-                      selectedKey={dictationKey}
-                      setSelectedKey={setDictationKey}
-                    />
-                  </React.Suspense>
                 </div>
                 <Button
                   onClick={saveKey}
@@ -1053,132 +1095,97 @@ export default function SettingsPage({
 
       case "aiModels":
         return (
-          <div className="space-y-6">
-            <div>
+          <div className="space-y-8">
+            <div className="space-y-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                AI Text Enhancement
+                AI Agent
               </h3>
               <p className="text-sm text-gray-600 mb-6">
-                Configure how AI models clean up and format your transcriptions.
-                This handles commands like "scratch that", creates proper lists,
-                and fixes obvious errors while preserving your natural tone.
+                Configure your AI assistant's name and the model it uses for commands.
               </p>
+              <div className="space-y-4 p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                <h4 className="font-medium text-gray-900">Agent Name</h4>
+                <div className="flex gap-3">
+                  <Input
+                    placeholder="e.g., Assistant, Jarvis, Alex..."
+                    value={agentName}
+                    onChange={(e) => setAgentName(e.target.value)}
+                    className="flex-1 text-center text-lg font-mono"
+                  />
+                  <Button
+                    onClick={() => {
+                      setAgentName(agentName.trim());
+                      showAlertDialog({
+                        title: "Agent Name Updated",
+                        description: `Your agent is now named "${agentName.trim()}". You can address it by saying "Hey ${agentName.trim()}" followed by your instructions.`,
+                      });
+                    }}
+                    disabled={!agentName.trim()}
+                  >
+                    Save
+                  </Button>
+                </div>
+                <p className="text-xs text-gray-600 mt-2">
+                  Choose a name that feels natural to say and remember.
+                </p>
+              </div>
+              <AIModelConfig
+                title="Enable AI Agent"
+                description="Use the agent to perform tasks by calling its name."
+                useFeature={useAgent}
+                setUseFeature={setUseAgent}
+                model={agentModel}
+                setModel={setAgentModel}
+                provider={agentProvider}
+                setProvider={setAgentProvider}
+                cloudReasoningBaseUrl={cloudReasoningBaseUrl}
+                setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
+                openaiApiKey={openaiApiKey}
+                setOpenaiApiKey={setOpenaiApiKey}
+                anthropicApiKey={anthropicApiKey}
+                setAnthropicApiKey={setAnthropicApiKey}
+                geminiApiKey={geminiApiKey}
+                setGeminiApiKey={setGeminiApiKey}
+                pasteFromClipboard={pasteFromClipboardWithFallback}
+                showAlertDialog={showAlertDialog}
+              />
             </div>
 
-            <AIModelSelectorEnhanced
-              useReasoningModel={useReasoningModel}
-              setUseReasoningModel={(value) => {
-                setUseReasoningModel(value);
-                updateReasoningSettings({ useReasoningModel: value });
-              }}
-              setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
-              cloudReasoningBaseUrl={cloudReasoningBaseUrl}
-              reasoningModel={reasoningModel}
-              setReasoningModel={setReasoningModel}
-              localReasoningProvider={localReasoningProvider}
-              setLocalReasoningProvider={setLocalReasoningProvider}
-              openaiApiKey={openaiApiKey}
-              setOpenaiApiKey={setOpenaiApiKey}
-              anthropicApiKey={anthropicApiKey}
-              setAnthropicApiKey={setAnthropicApiKey}
-              geminiApiKey={geminiApiKey}
-              setGeminiApiKey={setGeminiApiKey}
-              pasteFromClipboard={pasteFromClipboardWithFallback}
-              showAlertDialog={showAlertDialog}
-            />
+            <div className="space-y-6 border-t pt-8">
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Text Correction
+              </h3>
+              <p className="text-sm text-gray-600 mb-6">
+                Configure how AI models clean up and format your transcriptions automatically.
+              </p>
+              <AIModelConfig
+                title="Enable AI Text Correction"
+                description="Use AI to automatically improve transcription quality."
+                useFeature={useCorrection}
+                setUseFeature={setUseCorrection}
+                model={correctionModel}
+                setModel={setCorrectionModel}
+                provider={correctionProvider}
+                setProvider={setCorrectionProvider}
+                cloudReasoningBaseUrl={cloudReasoningBaseUrl}
+                setCloudReasoningBaseUrl={setCloudReasoningBaseUrl}
+                openaiApiKey={openaiApiKey}
+                setOpenaiApiKey={setOpenaiApiKey}
+                anthropicApiKey={anthropicApiKey}
+                setAnthropicApiKey={setAnthropicApiKey}
+                geminiApiKey={geminiApiKey}
+                setGeminiApiKey={setGeminiApiKey}
+                pasteFromClipboard={pasteFromClipboardWithFallback}
+                showAlertDialog={showAlertDialog}
+              />
+            </div>
 
-            <Button onClick={saveReasoningSettings} className="w-full">
-              Save AI Model Settings
+            <Button onClick={saveAiSettings} className="w-full">
+              Save AI Settings
             </Button>
           </div>
         );
 
-      case "agentConfig":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                Agent Configuration
-              </h3>
-              <p className="text-sm text-gray-600 mb-6">
-                Customize your AI assistant's name and behavior to make
-                interactions more personal and effective.
-              </p>
-            </div>
-
-            <div className="space-y-4 p-4 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl">
-              <h4 className="font-medium text-purple-900 mb-3">
-                💡 How to use agent names:
-              </h4>
-              <ul className="text-sm text-purple-800 space-y-2">
-                <li>
-                  • Say "Hey {agentName}, write a formal email" for specific
-                  instructions
-                </li>
-                <li>
-                  • Use "Hey {agentName}, format this as a list" for text
-                  enhancement commands
-                </li>
-                <li>
-                  • The agent will recognize when you're addressing it directly
-                  vs. dictating content
-                </li>
-                <li>
-                  • Makes conversations feel more natural and helps distinguish
-                  commands from dictation
-                </li>
-              </ul>
-            </div>
-
-            <div className="space-y-4 p-4 bg-gray-50 border border-gray-200 rounded-xl">
-              <h4 className="font-medium text-gray-900">Current Agent Name</h4>
-              <div className="flex gap-3">
-                <Input
-                  placeholder="e.g., Assistant, Jarvis, Alex..."
-                  value={agentName}
-                  onChange={(e) => setAgentName(e.target.value)}
-                  className="flex-1 text-center text-lg font-mono"
-                />
-                <Button
-                  onClick={() => {
-                    setAgentName(agentName.trim());
-                    showAlertDialog({
-                      title: "Agent Name Updated",
-                      description: `Your agent is now named "${agentName.trim()}". You can address it by saying "Hey ${agentName.trim()}" followed by your instructions.`,
-                    });
-                  }}
-                  disabled={!agentName.trim()}
-                >
-                  Save
-                </Button>
-              </div>
-              <p className="text-xs text-gray-600 mt-2">
-                Choose a name that feels natural to say and remember
-              </p>
-            </div>
-
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h4 className="font-medium text-blue-900 mb-2">
-                🎯 Example Usage:
-              </h4>
-              <div className="text-sm text-blue-800 space-y-1">
-                <p>
-                  • "Hey {agentName}, write an email to my team about the
-                  meeting"
-                </p>
-                <p>
-                  • "Hey {agentName}, make this more professional" (after
-                  dictating text)
-                </p>
-                <p>• "Hey {agentName}, convert this to bullet points"</p>
-                <p>
-                  • Regular dictation: "This is just normal text" (no agent name
-                  needed)
-                </p>
-              </div>
-            </div>
-          </div>
-        );
 
 
       case "prompts":

@@ -271,25 +271,15 @@ class ReasoningService extends BaseReasoningService {
       const systemPrompt = "You are a dictation assistant. Clean up text by fixing grammar and punctuation. Output ONLY the cleaned text without any explanations, options, or commentary.";
       const userPrompt = this.getReasoningPrompt(text, agentName, config);
 
-      // Build input array for Responses API
-      const input = [
+      // Build messages array (used for both endpoint types with different keys)
+      const messages = [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt }
       ];
 
-      // Build request body for Responses API
-      const requestBody: any = {
-        model: model || "gpt-4o-mini",
-        input,
-        messages: input, // include both for Responses and Chat Completions compatibility
-        store: false, // Don't store responses for privacy
-      };
-
-      // Add temperature for older models (GPT-4 and earlier)
+      // Determine if we should add temperature (older models only)
       const isOlderModel = model && (model.startsWith('gpt-4') || model.startsWith('gpt-3'));
-      if (isOlderModel) {
-        requestBody.temperature = config.temperature || 0.3;
-      }
+      const temperature = isOlderModel ? (config.temperature || 0.3) : undefined;
 
       const openAiBase = this.getConfiguredOpenAIBase();
       const endpointCandidates = this.getOpenAIEndpointCandidates(openAiBase);
@@ -306,6 +296,25 @@ class ReasoningService extends BaseReasoningService {
 
           for (const { url: endpoint, type } of endpointCandidates) {
             try {
+              // Build request body based on endpoint type
+              const requestBody: any = {
+                model: model || "gpt-4o-mini",
+              };
+
+              if (type === 'responses') {
+                // Responses API uses "input" parameter
+                requestBody.input = messages;
+                requestBody.store = false; // Don't store responses for privacy
+              } else {
+                // Chat Completions API uses "messages" parameter
+                requestBody.messages = messages;
+              }
+
+              // Add temperature for older models
+              if (temperature !== undefined) {
+                requestBody.temperature = temperature;
+              }
+
               const res = await fetch(endpoint, {
                 method: "POST",
                 headers: {
@@ -719,26 +728,25 @@ class ReasoningService extends BaseReasoningService {
     }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(providerId?: string): Promise<boolean> {
     try {
-      // Check if we have at least one configured API key or local model available
-      const openaiKey = await window.electronAPI?.getOpenAIKey?.();
-      const anthropicKey = await window.electronAPI?.getAnthropicKey?.();
-      const geminiKey = await window.electronAPI?.getGeminiKey?.();
-      const localAvailable = await window.electronAPI?.checkLocalReasoningAvailable?.();
+      const checkProvider = async (provider: 'openai' | 'anthropic' | 'gemini' | 'local') => {
+        if (provider === 'local') {
+          return await window.electronAPI?.checkLocalReasoningAvailable?.();
+        }
+        const key = await this.getApiKey(provider).catch(() => null);
+        return !!key;
+      };
+
+      if (providerId) {
+        return checkProvider(providerId as any);
+      }
+
+      // Original behavior: check if any provider is available
+      const providers: Array<'openai' | 'anthropic' | 'gemini' | 'local'> = ['openai', 'anthropic', 'gemini', 'local'];
+      const results = await Promise.all(providers.map(p => checkProvider(p)));
+      return results.some(Boolean);
       
-      logger.logReasoning("API_KEY_CHECK", {
-        hasOpenAI: !!openaiKey,
-        hasAnthropic: !!anthropicKey,
-        hasGemini: !!geminiKey,
-        hasLocal: !!localAvailable,
-        openAIKeyLength: openaiKey?.length || 0,
-        anthropicKeyLength: anthropicKey?.length || 0,
-        geminiKeyLength: geminiKey?.length || 0,
-        geminiKeyPreview: geminiKey ? `${geminiKey.substring(0, 8)}...` : 'none'
-      });
-      
-      return !!(openaiKey || anthropicKey || geminiKey || localAvailable);
     } catch (error) {
       logger.logReasoning("API_KEY_CHECK_ERROR", {
         error: (error as Error).message,

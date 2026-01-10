@@ -47,6 +47,7 @@
   "license": "MIT",
   "devDependencies": {
     "@electron/notarize": "^3.0.1",
+    "@electron/rebuild": "^3.7.2",
     "@eslint/js": "^9.25.0",
     "@tailwindcss/vite": "^4.1.10",
     "@types/react": "^19.1.2",

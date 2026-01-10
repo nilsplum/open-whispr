@@ -1,5 +1,6 @@
 import ReasoningService from "../services/ReasoningService";
 import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl } from "../config/constants";
+import { getModelProvider } from "../utils/languages";
 import logger from "../utils/logger";
 
 const SHORT_CLIP_DURATION_SECONDS = 2.5;
@@ -18,7 +19,7 @@ class AudioManager {
     this.cachedApiKey = null;
     this.cachedTranscriptionEndpoint = null;
     this.recordingStartTime = null;
-    this.reasoningAvailabilityCache = { value: false, expiresAt: 0 };
+    this.reasoningAvailabilityCache = {}; // Cache object keyed by providerId
     this.cachedReasoningPreference = null;
   }
 
@@ -34,7 +35,47 @@ class AudioManager {
         return false;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputDevices = devices.filter(
+        (device) => device.kind === "audioinput"
+      );
+
+      let deviceId = null;
+      // Always prioritize the actual built-in/internal computer microphone
+      // Avoid "default" which could be external devices like AirPods
+      // macOS: "Built-in Microphone", "Internal Microphone", "MacBook Pro Microphone"
+      // Windows: "Microphone (Built-in)", "Microphone Array (Built-in)"
+      // Linux: "Built-in Audio Analog Stereo", "Internal Audio"
+      const internalMic = audioInputDevices.find((device) => {
+        const label = device.label.toLowerCase();
+        // First priority: exact "built-in" matches
+        if (/built-in microphone|built-in audio/i.test(device.label)) {
+          return true;
+        }
+        // Second priority: internal computer microphone
+        if (/internal (microphone|audio)/i.test(device.label)) {
+          return true;
+        }
+        // Third priority: MacBook-specific
+        if (/macbook.*microphone/i.test(device.label)) {
+          return true;
+        }
+        // Fourth priority: Built-in arrays (Windows)
+        if (/microphone array.*built-in/i.test(device.label)) {
+          return true;
+        }
+        return false;
+      });
+
+      if (internalMic) {
+        deviceId = internalMic.deviceId;
+      }
+
+      const audioConstraints = deviceId
+        ? { audio: { deviceId: { exact: deviceId } } }
+        : { audio: true };
+
+      const stream = await navigator.mediaDevices.getUserMedia(audioConstraints);
 
 
       this.mediaRecorder = new MediaRecorder(stream);
@@ -325,133 +366,84 @@ class AudioManager {
     }
   }
 
-  async isReasoningAvailable() {
-    if (typeof window === "undefined" || !window.localStorage) {
-      return false;
-    }
-
-    const storedValue = localStorage.getItem("useReasoningModel");
+  async isProviderConfigured(providerId) {
     const now = Date.now();
-    const cacheValid =
-      this.reasoningAvailabilityCache &&
-      now < this.reasoningAvailabilityCache.expiresAt &&
-      this.cachedReasoningPreference === storedValue;
-
-    if (cacheValid) {
-      return this.reasoningAvailabilityCache.value;
-    }
-
-    logger.logReasoning("REASONING_STORAGE_CHECK", {
-      storedValue,
-      typeOfStoredValue: typeof storedValue,
-      isTrue: storedValue === "true",
-      isTruthy: !!storedValue && storedValue !== "false",
-    });
-
-    const useReasoning =
-      storedValue === "true" || (!!storedValue && storedValue !== "false");
-
-    if (!useReasoning) {
-      this.reasoningAvailabilityCache = {
-        value: false,
-        expiresAt: now + REASONING_CACHE_TTL,
-      };
-      this.cachedReasoningPreference = storedValue;
-      return false;
+    // Simple cache to avoid spamming checks for the same provider
+    if (this.reasoningAvailabilityCache[providerId] && now < this.reasoningAvailabilityCache[providerId].expiresAt) {
+      return this.reasoningAvailabilityCache[providerId].value;
     }
 
     try {
-      const isAvailable = await ReasoningService.isAvailable();
-
-      logger.logReasoning("REASONING_AVAILABILITY", {
-        isAvailable,
-        reasoningEnabled: useReasoning,
-        finalDecision: useReasoning && isAvailable,
-      });
-
-      this.reasoningAvailabilityCache = {
-        value: isAvailable,
+      const isConfigured = await ReasoningService.isAvailable(providerId);
+      this.reasoningAvailabilityCache[providerId] = {
+        value: isConfigured,
         expiresAt: now + REASONING_CACHE_TTL,
       };
-      this.cachedReasoningPreference = storedValue;
-
-      return isAvailable;
+      return isConfigured;
     } catch (error) {
-      logger.logReasoning("REASONING_AVAILABILITY_ERROR", {
+      logger.logReasoning("REASONING_CONFIG_CHECK_ERROR", {
+        providerId,
         error: error.message,
         stack: error.stack,
       });
-
-      this.reasoningAvailabilityCache = {
+      this.reasoningAvailabilityCache[providerId] = {
         value: false,
         expiresAt: now + REASONING_CACHE_TTL,
       };
-      this.cachedReasoningPreference = storedValue;
       return false;
     }
   }
 
   async processTranscription(text, source) {
     const normalizedText = typeof text === "string" ? text.trim() : "";
+    const agentName = localStorage.getItem("agentName");
+    const useAgent = localStorage.getItem("useAgent") === "true";
+    const useCorrection = localStorage.getItem("useCorrection") === "true";
 
-    logger.logReasoning("TRANSCRIPTION_RECEIVED", {
-      source,
-      textLength: normalizedText.length,
-      textPreview: normalizedText.substring(0, 100) + (normalizedText.length > 100 ? "..." : ""),
-      timestamp: new Date().toISOString()
-    });
+    const agentRegex = agentName ? new RegExp(`^(hey|ok) ${agentName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]`, 'i') : null;
+    const isAgentCommand = agentRegex ? agentRegex.test(normalizedText) : false;
 
-    const reasoningModel = (typeof window !== 'undefined' && window.localStorage)
-      ? (localStorage.getItem("reasoningModel") || "gpt-4o-mini")
-      : "gpt-4o-mini";
-    const reasoningProvider = (typeof window !== 'undefined' && window.localStorage)
-      ? (localStorage.getItem("reasoningProvider") || "auto")
-      : "auto";
-    const agentName = (typeof window !== 'undefined' && window.localStorage)
-      ? (localStorage.getItem("agentName") || null)
-      : null;
-    const useReasoning = await this.isReasoningAvailable();
-
-    logger.logReasoning("REASONING_CHECK", {
-      useReasoning,
-      reasoningModel,
-      reasoningProvider,
-      agentName
-    });
-
-    if (useReasoning) {
-      try {
-        const preparedText = normalizedText;
-
-        logger.logReasoning("SENDING_TO_REASONING", {
-          preparedTextLength: preparedText.length,
-          model: reasoningModel,
-          provider: reasoningProvider
+    if (isAgentCommand && useAgent) {
+      const modelToUse = localStorage.getItem("agentModel") || "gpt-4o-mini";
+      const agentProvider = getModelProvider(modelToUse);
+      const isConfigured = await this.isProviderConfigured(agentProvider);
+      if (isConfigured) {
+        try {
+          return await this.processWithReasoningModel(normalizedText, modelToUse, agentName);
+        } catch (error) {
+          this.onError?.({
+            title: "AI Agent Error",
+            description: error.message,
+          });
+          return normalizedText;
+        }
+      } else {
+        this.onError?.({
+          title: "Agent Not Configured",
+          description: `Please configure the ${agentProvider} provider in settings to use agent commands.`,
         });
-
-        const result = await this.processWithReasoningModel(preparedText, reasoningModel, agentName);
-        
-        logger.logReasoning("REASONING_SUCCESS", {
-          resultLength: result.length,
-          resultPreview: result.substring(0, 100) + (result.length > 100 ? "..." : ""),
-          processingTime: new Date().toISOString()
-        });
-        
-        return result;
-      } catch (error) {
-        logger.logReasoning("REASONING_FAILED", {
-          error: error.message,
-          stack: error.stack,
-          fallbackToCleanup: true
-        });
-        console.error(`Reasoning failed (${source}):`, error.message);
+        return normalizedText;
       }
     }
 
-    logger.logReasoning("USING_STANDARD_CLEANUP", {
-      reason: useReasoning ? "Reasoning failed" : "Reasoning not enabled"
-    });
-
+    if (!isAgentCommand && useCorrection) {
+      const modelToUse = localStorage.getItem("correctionModel") || "gpt-4o-mini";
+      const correctionProvider = getModelProvider(modelToUse);
+      const isConfigured = await this.isProviderConfigured(correctionProvider);
+      if (isConfigured) {
+        try {
+          return await this.processWithReasoningModel(normalizedText, modelToUse, agentName);
+        } catch (error) {
+          this.onError?.({
+            title: "AI Correction Error",
+            description: error.message,
+          });
+          return normalizedText;
+        }
+      }
+      // Don't show an error if correction is not configured, just fail silently.
+    }
+    
     return normalizedText;
   }
 
@@ -504,9 +496,9 @@ class AudioManager {
       const result = await response.json();
 
       if (result.text) {
-        const text = await this.processTranscription(result.text, "openai");
-        const source = await this.isReasoningAvailable() ? "openai-reasoned" : "openai";
-        return { success: true, text, source };
+        const processedText = await this.processTranscription(result.text, "openai");
+        const source = result.text !== processedText ? "openai-reasoned" : "openai";
+        return { success: true, text: processedText, source };
       } else {
         throw new Error("No text transcribed");
       }

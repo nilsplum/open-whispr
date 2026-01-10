@@ -69,8 +69,8 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     preferredLanguage,
     cloudTranscriptionBaseUrl,
     cloudReasoningBaseUrl,
-    useReasoningModel,
-    reasoningModel,
+    useCorrection,
+    correctionModel,
     openaiApiKey,
     dictationKey,
     setUseLocalWhisper,
@@ -80,12 +80,75 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     setCloudReasoningBaseUrl,
     setDictationKey,
     updateTranscriptionSettings,
-    updateReasoningSettings,
+    updateCorrectionSettings,
     updateApiKeys,
   } = useSettings();
 
   const [apiKey, setApiKey] = useState(openaiApiKey);
   const [hotkey, setHotkey] = useState(dictationKey || "`");
+
+  const handleHotkeyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const { code, ctrlKey, altKey, shiftKey, metaKey } = e;
+
+    // Ignore modifier-only key presses
+    if (['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight'].includes(code)) {
+        return;
+    }
+
+    const parts = [];
+    // Use a consistent order for modifiers
+    if (metaKey) parts.push("Command");
+    if (ctrlKey) parts.push("Control");
+    if (altKey) parts.push("Alt");
+    if (shiftKey) parts.push("Shift");
+
+    // Map special keys to friendly names
+    const keyMap: Record<string, string> = {
+      'ArrowUp': 'Up',
+      'ArrowDown': 'Down',
+      'ArrowLeft': 'Left',
+      'ArrowRight': 'Right',
+      'Escape': 'Esc',
+      'Backspace': 'Backspace',
+      'Tab': 'Tab',
+      'Space': 'Space',
+      'Enter': 'Enter',
+      'Delete': 'Delete',
+      'Home': 'Home',
+      'End': 'End',
+      'PageUp': 'PageUp',
+      'PageDown': 'PageDown',
+      'Insert': 'Insert',
+    };
+
+    let keyStr = code;
+
+    if (keyStr.startsWith('Key')) {
+      keyStr = keyStr.substring(3);
+    } else if (keyStr.startsWith('Digit')) {
+      keyStr = keyStr.substring(5);
+    } else if (keyStr.startsWith('Numpad')) {
+      keyStr = `Numpad${keyStr.substring(6)}`;
+    } else if (keyStr.startsWith('F') && /^F\d+$/.test(keyStr)) {
+      // Function keys (F1-F12) stay as-is
+    } else if (keyMap[keyStr]) {
+      keyStr = keyMap[keyStr];
+    }
+
+    // Don't add modifiers as the main key
+    if (!['Control', 'Alt', 'Shift', 'Command', 'Meta'].includes(keyStr)) {
+      parts.push(keyStr);
+    }
+
+    // A hotkey must have a main key.
+    if (parts.length > 0 && !['Control', 'Alt', 'Shift', 'Command'].includes(parts[parts.length - 1])) {
+      setHotkey(parts.join('+'));
+    }
+  };
+
   const [transcriptionBaseUrl, setTranscriptionBaseUrl] = useState(cloudTranscriptionBaseUrl);
   const [reasoningBaseUrl, setReasoningBaseUrl] = useState(cloudReasoningBaseUrl);
   const [agentName, setAgentName] = useState("Agent");
@@ -162,10 +225,10 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     [useLocalWhisper, updateApiKeys, openaiApiKey]
   );
 
-  const reasoningModelRef = useRef(reasoningModel);
+  const reasoningModelRef = useRef(correctionModel);
   useEffect(() => {
-    reasoningModelRef.current = reasoningModel;
-  }, [reasoningModel]);
+    reasoningModelRef.current = correctionModel;
+  }, [correctionModel]);
 
   useEffect(() => {
     if (!usingCustomReasoningBase) {
@@ -251,7 +314,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
         if (mappedModels.length === 0) {
           setCustomModelsError("No models returned by this endpoint.");
         } else if (!mappedModels.some((model) => model.value === reasoningModelRef.current)) {
-          updateReasoningSettings({ reasoningModel: mappedModels[0].value });
+          updateCorrectionSettings({ correctionModel: mappedModels[0].value });
         }
       } catch (error) {
         if (isCancelled) {
@@ -275,20 +338,20 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       isCancelled = true;
       controller.abort();
     };
-  }, [usingCustomReasoningBase, normalizedReasoningBaseUrl, apiKey, updateReasoningSettings]);
+  }, [usingCustomReasoningBase, normalizedReasoningBaseUrl, apiKey, updateCorrectionSettings]);
 
   useEffect(() => {
     if (!usingCustomReasoningBase && defaultReasoningModels.length > 0) {
-      if (!defaultReasoningModels.some((model) => model.value === reasoningModel)) {
-        updateReasoningSettings({ reasoningModel: defaultReasoningModels[0].value });
+      if (!defaultReasoningModels.some((model) => model.value === correctionModel)) {
+        updateCorrectionSettings({ correctionModel: defaultReasoningModels[0].value });
       }
     }
-  }, [usingCustomReasoningBase, defaultReasoningModels, reasoningModel, updateReasoningSettings]);
+  }, [usingCustomReasoningBase, defaultReasoningModels, correctionModel, updateCorrectionSettings]);
 
   const activeReasoningModelLabel = useMemo(() => {
-    const match = displayedReasoningModels.find((model) => model.value === reasoningModel);
-    return match?.label || reasoningModel;
-  }, [displayedReasoningModels, reasoningModel]);
+    const match = displayedReasoningModels.find((model) => model.value === correctionModel);
+    return match?.label || correctionModel;
+  }, [displayedReasoningModels, correctionModel]);
 
   const whisperHook = useWhisper(showAlertDialog);
   const { setupProgressListener } = whisperHook;
@@ -366,9 +429,9 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       preferredLanguage,
       cloudTranscriptionBaseUrl: normalizedTranscriptionBase,
     });
-    updateReasoningSettings({
-      useReasoningModel,
-      reasoningModel,
+    updateCorrectionSettings({
+      useCorrection,
+      correctionModel,
       cloudReasoningBaseUrl: normalizedReasoningBaseValue,
     });
     const hotkeyRegistered = await ensureHotkeyRegistered();
@@ -407,7 +470,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     transcriptionBaseUrl,
     reasoningBaseUrl,
     updateTranscriptionSettings,
-    updateReasoningSettings,
+    updateCorrectionSettings,
     persistOpenAIKey,
     setCloudTranscriptionBaseUrl,
     setCloudReasoningBaseUrl,
@@ -789,9 +852,9 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                   )}
                   <UnifiedModelPickerCompact
                     models={displayedReasoningModels}
-                    selectedModel={reasoningModel}
+                    selectedModel={correctionModel}
                     onModelSelect={(modelId) =>
-                      updateReasoningSettings({ reasoningModel: modelId })
+                      updateCorrectionSettings({ correctionModel: modelId })
                     }
                   />
                 </div>
@@ -899,23 +962,15 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
                   Activation Key
                 </label>
                 <Input
-                  placeholder="Default: ` (backtick)"
-                  value={hotkey}
-                  onChange={(e) => setHotkey(e.target.value)}
+                  placeholder="Click here and press a key combination"
+                  value={formatHotkeyLabel(hotkey)}
+                  onKeyDown={handleHotkeyKeyDown}
+                  readOnly
                   className="text-center text-lg font-mono"
                 />
                 <p className="text-xs text-gray-500 mt-2">
-                  Press this key from anywhere to start/stop dictation
+                  Press a key combination (e.g., Control + D) to set it as your hotkey.
                 </p>
-              </div>
-
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h4 className="font-medium text-gray-900 mb-3">
-                  Click any key to select it:
-                </h4>
-                <React.Suspense fallback={<div>Loading keyboard...</div>}>
-                  <InteractiveKeyboard selectedKey={hotkey} setSelectedKey={setHotkey} />
-                </React.Suspense>
               </div>
             </div>
           </div>
