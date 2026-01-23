@@ -1,4 +1,4 @@
-const { app, globalShortcut, BrowserWindow, dialog } = require("electron");
+const { app, globalShortcut, BrowserWindow, dialog, powerMonitor, session } = require("electron");
 
 // Ensure macOS menus use the proper casing for the app name
 if (process.platform === "darwin" && app.getName() !== "OpenWhispr") {
@@ -108,8 +108,38 @@ const ipcHandlers = new IPCHandlers({
   windowManager,
 });
 
+// Handle system sleep/wake to clear stale network connections
+function setupPowerEventHandlers() {
+  if (!powerMonitor) return;
+
+  powerMonitor.on('suspend', () => {
+    console.log('System is going to sleep - network connections will be cleared on wake');
+  });
+
+  powerMonitor.on('resume', () => {
+    console.log('System woke from sleep - clearing Electron network cache');
+    // Clear cached network data to force fresh connections after sleep
+    const ses = session.defaultSession;
+    if (ses) {
+      ses.clearCache().catch(err => console.error('Failed to clear cache:', err));
+      ses.clearStorageData({ storages: ['cookies'] }).catch(err => console.error('Failed to clear cookies:', err));
+    }
+  });
+
+  powerMonitor.on('lock-screen', () => {
+    console.log('Screen locked');
+  });
+
+  powerMonitor.on('unlock-screen', () => {
+    console.log('Screen unlocked');
+  });
+}
+
 // Main application startup
 async function startApp() {
+  // Set up power event handlers before anything else
+  setupPowerEventHandlers();
+
   // In development, add a small delay to let Vite start properly
   if (process.env.NODE_ENV === "development") {
     await new Promise((resolve) => setTimeout(resolve, 2000));

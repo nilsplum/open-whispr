@@ -515,6 +515,30 @@ class AudioManager {
       textLength: text.length
     });
 
+    // Validate agent configuration before processing
+    if (!agent.model || agent.model.trim() === '') {
+      throw new Error(`Agent "${agent.name}" has no model configured. Please set a model name in the agent settings.`);
+    }
+
+    // Check if API key is available for cloud providers
+    const provider = getModelProvider(agent.model);
+    if (provider === 'openai') {
+      const apiKey = localStorage.getItem('openaiApiKey');
+      if (!apiKey || apiKey.trim() === '') {
+        throw new Error(`Agent "${agent.name}" requires an OpenAI API key. Please add your API key in Settings > Agents.`);
+      }
+    } else if (provider === 'anthropic') {
+      const apiKey = localStorage.getItem('anthropicApiKey');
+      if (!apiKey || apiKey.trim() === '') {
+        throw new Error(`Agent "${agent.name}" requires an Anthropic API key. Please add your API key in Settings > Agents.`);
+      }
+    } else if (provider === 'gemini') {
+      const apiKey = localStorage.getItem('geminiApiKey');
+      if (!apiKey || apiKey.trim() === '') {
+        throw new Error(`Agent "${agent.name}" requires a Gemini API key. Please add your API key in Settings > Agents.`);
+      }
+    }
+
     // Use agent's custom prompt
     const prompt = agent.prompt
       .replace(/\{\{agentName\}\}/g, agent.name)
@@ -526,26 +550,42 @@ class AudioManager {
       promptLength: prompt.length
     });
 
-    // Process with agent's model using the custom prompt
-    const result = await ReasoningService.processText(
-      text, 
-      agent.model, 
-      agent.name,
-      {
-        customPrompts: {
-          agent: agent.prompt,
-          regular: agent.prompt // Use same prompt
+    try {
+      // Process with agent's model using the custom prompt
+      const result = await ReasoningService.processText(
+        text, 
+        agent.model, 
+        agent.name,
+        {
+          customPrompts: {
+            agent: agent.prompt,
+            regular: agent.prompt // Use same prompt
+          }
         }
-      }
-    );
-    
-    logger.logReasoning("AGENT_PROCESSING_COMPLETE", {
-      agentId: agent.id,
-      agentName: agent.name,
-      resultLength: result.length
-    });
+      );
+      
+      logger.logReasoning("AGENT_PROCESSING_COMPLETE", {
+        agentId: agent.id,
+        agentName: agent.name,
+        resultLength: result.length
+      });
 
-    return result;
+      return result;
+    } catch (error) {
+      // Enhance error message with specific details
+      const errorMsg = error.message || 'Unknown error';
+      if (errorMsg.includes('401') || errorMsg.includes('unauthorized')) {
+        throw new Error(`Agent "${agent.name}" authentication failed. Please check your API key is valid and has sufficient permissions.`);
+      } else if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+        throw new Error(`Agent "${agent.name}" model "${agent.model}" not found. Please verify the model name is correct and available for your API key.`);
+      } else if (errorMsg.includes('429') || errorMsg.includes('rate limit')) {
+        throw new Error(`Agent "${agent.name}" rate limit exceeded. Please wait a moment and try again.`);
+      } else if (errorMsg.includes('timeout')) {
+        throw new Error(`Agent "${agent.name}" request timed out. Please check your internet connection and try again.`);
+      } else {
+        throw new Error(`Agent "${agent.name}" error: ${errorMsg}`);
+      }
+    }
   }
 
   async processWithOpenAIAPI(audioBlob, metadata = {}) {
@@ -555,7 +595,6 @@ class AudioManager {
     const fallbackModel = localStorage.getItem("fallbackWhisperModel") || "base";
 
     try {
-
       const durationSeconds = metadata.durationSeconds ?? null;
       const shouldSkipOptimizationForDuration =
         typeof durationSeconds === "number" &&
@@ -565,44 +604,32 @@ class AudioManager {
       const shouldOptimize =
         !shouldSkipOptimizationForDuration && audioBlob.size > 1024 * 1024;
 
-      const [apiKey, optimizedAudio] = await Promise.all([
-        this.getAPIKey(),
-        shouldOptimize ? this.optimizeAudio(audioBlob) : Promise.resolve(audioBlob),
-      ]);
+      const optimizedAudio = shouldOptimize 
+        ? await this.optimizeAudio(audioBlob) 
+        : audioBlob;
 
-      const formData = new FormData();
-      formData.append("file", optimizedAudio, "audio.wav");
-      formData.append("model", "whisper-1");
+      // Convert blob to ArrayBuffer for IPC transfer
+      const audioArrayBuffer = await optimizedAudio.arrayBuffer();
+      const endpoint = this.getTranscriptionEndpoint();
 
-      if (language && language !== "auto") {
-        formData.append("language", language);
-      }
-
-      const response = await fetch(
-        this.getTranscriptionEndpoint(),
+      // Use main process IPC for cloud transcription to avoid renderer TLS issues
+      const cloudResult = await window.electronAPI.transcribeCloudWhisper(
+        audioArrayBuffer,
         {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: formData,
+          endpoint,
+          model: "whisper-1",
+          ...(language && language !== "auto" ? { language } : {}),
         }
       );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API Error: ${response.status} ${errorText}`);
-      }
-
-      const result = await response.json();
-
-      if (result.text) {
-        const processedText = await this.processTranscription(result.text, "openai");
-        const source = result.text !== processedText ? "openai-reasoned" : "openai";
+      if (cloudResult?.success && cloudResult.text) {
+        const processedText = await this.processTranscription(cloudResult.text, "openai");
+        const source = cloudResult.text !== processedText ? "openai-reasoned" : "openai";
         return { success: true, text: processedText, source };
-      } else {
-        throw new Error("No text transcribed");
       }
+
+      // If IPC failed, throw the error
+      throw new Error(cloudResult?.error || "Cloud transcription failed");
     } catch (error) {
       const isOpenAIMode = localStorage.getItem("useLocalWhisper") !== "true";
 

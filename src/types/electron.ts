@@ -177,6 +177,18 @@ declare global {
         audioBlob: Blob | ArrayBuffer,
         options?: any
       ) => Promise<any>;
+      transcribeCloudWhisper: (
+        audioBuffer: ArrayBuffer,
+        options?: {
+          endpoint?: string;
+          model?: string;
+          language?: string;
+        }
+      ) => Promise<{
+        success: boolean;
+        text?: string;
+        error?: string;
+      }>;
       checkWhisperInstallation: () => Promise<WhisperCheckResult>;
       installWhisper: () => Promise<WhisperInstallResult>;
       onWhisperInstallProgress: (

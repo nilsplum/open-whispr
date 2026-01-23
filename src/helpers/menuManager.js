@@ -18,6 +18,14 @@ class MenuManager {
             { role: "quit", label: "Quit OpenWhispr" },
           ],
         },
+        {
+          label: "View",
+          submenu: [
+            { role: "reload" },
+            { role: "forceReload" },
+            { role: "toggleDevTools" },
+          ],
+        },
       ];
       const menu = Menu.buildFromTemplate(template);
       Menu.setApplicationMenu(menu);

@@ -79,6 +79,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Local Whisper functions
   transcribeLocalWhisper: (audioBlob, options) =>
     ipcRenderer.invoke("transcribe-local-whisper", audioBlob, options),
+  // Cloud Whisper (OpenAI) transcription via main process (avoids renderer CSP/network quirks)
+  transcribeCloudWhisper: (audioBuffer, options) =>
+    ipcRenderer.invoke("transcribe-cloud-whisper", audioBuffer, options),
   checkWhisperInstallation: () =>
     ipcRenderer.invoke("check-whisper-installation"),
   installWhisper: () => ipcRenderer.invoke("install-whisper"),

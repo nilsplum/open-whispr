@@ -1,6 +1,159 @@
 const { ipcMain, app, shell, BrowserWindow } = require("electron");
+const crypto = require("crypto");
+const dns = require("dns");
+const http = require("http");
+const https = require("https");
+const { URL } = require("url");
 const AppUtils = require("../utils");
 const debugLogger = require("./debugLogger");
+
+function isLocalhostHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function isAllowedTranscriptionUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol === "https:") return true;
+  if (parsed.protocol === "http:" && isLocalhostHost(parsed.hostname)) return true;
+  return false;
+}
+
+function buildMultipartBody({ fields, fileFieldName, filename, fileContentType, fileBuffer }) {
+  const boundary = `----OpenWhisprBoundary${crypto.randomBytes(16).toString("hex")}`;
+  const chunks = [];
+  const push = (value) => chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(String(value)));
+
+  for (const [name, value] of Object.entries(fields || {})) {
+    if (value === undefined || value === null) continue;
+    push(`--${boundary}\r\n`);
+    push(`Content-Disposition: form-data; name="${name}"\r\n\r\n`);
+    push(String(value));
+    push("\r\n");
+  }
+
+  push(`--${boundary}\r\n`);
+  push(
+    `Content-Disposition: form-data; name="${fileFieldName}"; filename="${filename}"\r\n`
+  );
+  push(`Content-Type: ${fileContentType || "application/octet-stream"}\r\n\r\n`);
+  push(fileBuffer);
+  push("\r\n");
+  push(`--${boundary}--\r\n`);
+
+  const body = Buffer.concat(chunks);
+  return {
+    body,
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
+async function httpRequestJson({ url, method, headers, body, timeoutMs = 60000 }) {
+  const parsed = new URL(url);
+  const isHttps = parsed.protocol === "https:";
+  const requestImpl = isHttps ? https : http;
+
+  const isRetryableError = (error) => {
+    const code = error?.code;
+    if (
+      code === "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC" ||
+      code === "ECONNRESET" ||
+      code === "ETIMEDOUT" ||
+      code === "ECONNREFUSED" ||
+      code === "EPIPE" ||
+      code === "EAI_AGAIN" ||
+      code === "ENOTFOUND"
+    ) {
+      return true;
+    }
+
+    const message = String(error?.message || "").toLowerCase();
+    if (message.includes("fetch failed")) return true;
+    if (message.includes("sslv3_alert_bad_record_mac")) return true;
+    return false;
+  };
+
+  const maxAttempts = 3;
+  const backoffMs = [0, 400, 1200];
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (backoffMs[attempt - 1] > 0) {
+      await new Promise((r) => setTimeout(r, backoffMs[attempt - 1]));
+    }
+
+    const requestOptions = {
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: `${parsed.pathname}${parsed.search}`,
+      method,
+      headers: {
+        ...headers,
+        // Force connection close to avoid stale connection pool issues
+        Connection: "close",
+      },
+    };
+
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      return await new Promise((resolve, reject) => {
+        const req = requestImpl.request(requestOptions, (res) => {
+          const chunks = [];
+          res.on("data", (d) => chunks.push(d));
+          res.on("end", () => {
+            const raw = Buffer.concat(chunks).toString("utf8");
+            const status = res.statusCode || 0;
+            if (status < 200 || status >= 300) {
+              const error = new Error(
+                `HTTP ${status}: ${raw || res.statusMessage || "Request failed"}`
+              );
+              error.statusCode = status;
+              return reject(error);
+            }
+
+            try {
+              resolve(raw ? JSON.parse(raw) : {});
+            } catch (parseError) {
+              const error = new Error(`Invalid JSON response: ${raw.substring(0, 200)}`);
+              error.cause = parseError;
+              reject(error);
+            }
+          });
+        });
+
+        req.on("error", reject);
+        req.setTimeout(timeoutMs, () => {
+          req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+        });
+
+        if (body) req.write(body);
+        req.end();
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !isRetryableError(error)) {
+        throw error;
+      }
+
+      debugLogger.log("httpRequestJson retrying", {
+        url: parsed.origin,
+        attempt,
+        maxAttempts,
+        code: error?.code,
+        message: error?.message,
+      });
+    }
+  }
+
+  throw lastError;
+}
 
 class IPCHandlers {
   constructor(managers) {
@@ -178,6 +331,96 @@ class IPCHandlers {
         } catch (error) {
           debugLogger.error('Local Whisper transcription error', error);
           throw error;
+        }
+      }
+    );
+
+    ipcMain.handle(
+      "transcribe-cloud-whisper",
+      async (_event, audioBuffer, options = {}) => {
+        const apiKey = this.environmentManager.getOpenAIKey();
+        if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
+          return {
+            success: false,
+            error:
+              "OpenAI API key not found. Please add your API key in Settings (it’s stored in your userData .env).",
+          };
+        }
+
+        const endpoint =
+          typeof options.endpoint === "string" && options.endpoint.trim()
+            ? options.endpoint.trim()
+            : "https://api.openai.com/v1/audio/transcriptions";
+
+        if (!isAllowedTranscriptionUrl(endpoint)) {
+          return {
+            success: false,
+            error:
+              "Transcription endpoint must be HTTPS (or http://localhost). Please check your transcription base URL setting.",
+          };
+        }
+
+        try {
+          const fileBuffer = Buffer.from(audioBuffer);
+          const model = typeof options.model === "string" ? options.model : "whisper-1";
+          const language =
+            typeof options.language === "string" && options.language.trim()
+              ? options.language.trim()
+              : undefined;
+
+          debugLogger.log("transcribe-cloud-whisper request", {
+            endpoint,
+            model,
+            hasLanguage: !!language,
+            audioBytes: fileBuffer.length,
+          });
+
+          const { body, contentType } = buildMultipartBody({
+            fields: {
+              model,
+              ...(language ? { language } : {}),
+            },
+            fileFieldName: "file",
+            filename: "audio.wav",
+            fileContentType: "audio/wav",
+            fileBuffer,
+          });
+
+          const json = await httpRequestJson({
+            url: endpoint,
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": contentType,
+              "Content-Length": String(body.length),
+            },
+            body,
+            timeoutMs: 120000,
+          });
+
+          if (json && typeof json.text === "string") {
+            return { success: true, text: json.text };
+          }
+
+          return {
+            success: false,
+            error:
+              "OpenAI transcription returned an unexpected response. Try again or check logs for details.",
+          };
+        } catch (error) {
+          debugLogger.error("transcribe-cloud-whisper error", {
+            message: error?.message,
+            code: error?.code,
+            statusCode: error?.statusCode,
+            stack: error?.stack,
+          });
+
+          return {
+            success: false,
+            error:
+              error?.message ||
+              "Cloud transcription failed (network/TLS error). If you’re on a VPN/proxy, try disabling it.",
+          };
         }
       }
     );

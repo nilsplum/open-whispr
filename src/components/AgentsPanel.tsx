@@ -15,7 +15,6 @@ import {
   Shield
 } from "lucide-react";
 import { useAgents, Agent } from "../hooks/useAgents";
-import { UnifiedModelPickerCompact } from "./UnifiedModelPicker";
 import { REASONING_PROVIDERS } from "../utils/languages";
 import { modelRegistry } from "../models/ModelRegistry";
 import ApiKeyInput from "./ui/ApiKeyInput";
@@ -80,7 +79,81 @@ function AgentCard({
 
   const isTextCorrection = agent.id === 'text-correction';
 
+  const getDefaultModel = (provider: string, mode: 'cloud' | 'local'): string => {
+    if (mode === 'cloud') {
+      if (provider === 'openai') return 'gpt-5-mini';
+      if (provider === 'anthropic') return 'claude-sonnet-4-20250514';
+      if (provider === 'gemini') return 'gemini-2.5-flash';
+      if (provider === 'custom') return 'gpt-4o-mini';
+    } else {
+      const providerData = modelRegistry.getProvider(provider);
+      const models = providerData?.models || [];
+      if (models.length > 0) {
+        // Prefer recommended model or first model
+        const recommended = models.find(m => m.recommended);
+        return recommended?.id || models[0].id;
+      }
+      return 'llama-3.2-3b';
+    }
+    return 'gpt-4o-mini';
+  };
+
+  const validateAgentConfig = (): { valid: boolean; error?: string } => {
+    // Check model name
+    if (!agent.model || agent.model.trim() === '') {
+      return {
+        valid: false,
+        error: 'Model name is required. Please enter a valid model name for this agent.'
+      };
+    }
+
+    // Check API key for cloud providers
+    if (selectedMode === 'cloud') {
+      if (selectedCloudProvider === 'openai') {
+        if (!openaiApiKey || openaiApiKey.trim() === '') {
+          return {
+            valid: false,
+            error: 'OpenAI API key is required. Please add your API key in the OpenAI configuration section.'
+          };
+        }
+      } else if (selectedCloudProvider === 'anthropic') {
+        if (!anthropicApiKey || anthropicApiKey.trim() === '') {
+          return {
+            valid: false,
+            error: 'Anthropic API key is required. Please add your API key in the Anthropic configuration section.'
+          };
+        }
+      } else if (selectedCloudProvider === 'gemini') {
+        if (!geminiApiKey || geminiApiKey.trim() === '') {
+          return {
+            valid: false,
+            error: 'Gemini API key is required. Please add your API key in the Gemini configuration section.'
+          };
+        }
+      } else if (selectedCloudProvider === 'custom') {
+        if (!cloudReasoningBaseUrl || cloudReasoningBaseUrl.trim() === '') {
+          return {
+            valid: false,
+            error: 'Custom endpoint URL is required. Please enter your API endpoint URL.'
+          };
+        }
+      }
+    }
+
+    return { valid: true };
+  };
+
   const handleSave = () => {
+    // Validate configuration
+    const validation = validateAgentConfig();
+    if (!validation.valid) {
+      showAlertDialog({
+        title: "Configuration Error",
+        description: validation.error || "Please check your agent configuration.",
+      });
+      return;
+    }
+
     onUpdate(agent.id, {
       name: localName,
       wakeWords: localWakeWords,
@@ -94,53 +167,33 @@ function AgentCard({
 
   const handleModeChange = (mode: 'cloud' | 'local') => {
     setSelectedMode(mode);
-    if (mode === 'cloud') {
-      onUpdate(agent.id, {
-        provider: selectedCloudProvider,
-        model: REASONING_PROVIDERS[selectedCloudProvider as keyof typeof REASONING_PROVIDERS]?.models?.[0]?.value || 'gpt-4o-mini'
-      });
-    } else {
-      const providerData = modelRegistry.getProvider(selectedLocalProvider);
-      onUpdate(agent.id, {
-        provider: selectedLocalProvider,
-        model: providerData?.models?.[0]?.id || 'llama-3.2-3b'
-      });
-    }
+    const newProvider = mode === 'cloud' ? selectedCloudProvider : selectedLocalProvider;
+    const defaultModel = getDefaultModel(newProvider, mode);
+    onUpdate(agent.id, {
+      provider: newProvider,
+      model: defaultModel
+    });
   };
 
   const handleProviderChange = (provider: string, mode: 'cloud' | 'local') => {
+    const defaultModel = getDefaultModel(provider, mode);
     if (mode === 'cloud') {
       setSelectedCloudProvider(provider);
-      const models = REASONING_PROVIDERS[provider as keyof typeof REASONING_PROVIDERS]?.models || [];
       onUpdate(agent.id, {
         provider,
-        model: models[0]?.value || 'gpt-4o-mini'
+        model: defaultModel
       });
     } else {
       setSelectedLocalProvider(provider);
-      const providerData = modelRegistry.getProvider(provider);
       onUpdate(agent.id, {
         provider,
-        model: providerData?.models?.[0]?.id || 'llama-3.2-3b'
+        model: defaultModel
       });
     }
   };
 
-  const getProviderModels = () => {
-    if (selectedMode === 'cloud') {
-      if (selectedCloudProvider === 'custom') {
-        return []; // Custom endpoint models handled separately
-      }
-      const provider = REASONING_PROVIDERS[selectedCloudProvider as keyof typeof REASONING_PROVIDERS];
-      return provider?.models || [];
-    } else {
-      const providerData = modelRegistry.getProvider(selectedLocalProvider);
-      return providerData?.models?.map(m => ({
-        value: m.id,
-        label: m.name,
-        description: m.description
-      })) || [];
-    }
+  const getModelPlaceholder = (): string => {
+    return getDefaultModel(selectedMode === 'cloud' ? selectedCloudProvider : selectedLocalProvider, selectedMode);
   };
 
   return (
@@ -318,19 +371,21 @@ function AgentCard({
                   ))}
                 </div>
 
-                {/* Model Selection */}
-                {selectedCloudProvider !== 'custom' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Select Model
-                    </label>
-                    <UnifiedModelPickerCompact
-                      models={getProviderModels()}
-                      selectedModel={agent.model}
-                      onModelSelect={(model) => onUpdate(agent.id, { model })}
-                    />
-                  </div>
-                )}
+                {/* Model Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Model Name
+                  </label>
+                  <Input
+                    value={agent.model}
+                    onChange={(e) => onUpdate(agent.id, { model: e.target.value })}
+                    placeholder={getModelPlaceholder()}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-gray-600 mt-1">
+                    Enter any model name supported by {selectedCloudProvider === 'custom' ? 'your endpoint' : REASONING_PROVIDERS[selectedCloudProvider as keyof typeof REASONING_PROVIDERS]?.name || 'this provider'}
+                  </p>
+                </div>
 
                 {/* API Key Configuration */}
                 {selectedCloudProvider === 'openai' && (
@@ -436,16 +491,20 @@ function AgentCard({
                   })}
                 </div>
 
-                {/* Model Selection */}
+                {/* Model Input */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Model
+                    Model Name
                   </label>
-                  <UnifiedModelPickerCompact
-                    models={getProviderModels()}
-                    selectedModel={agent.model}
-                    onModelSelect={(model) => onUpdate(agent.id, { model })}
+                  <Input
+                    value={agent.model}
+                    onChange={(e) => onUpdate(agent.id, { model: e.target.value })}
+                    placeholder={getModelPlaceholder()}
+                    className="font-mono text-sm"
                   />
+                  <p className="text-xs text-gray-600 mt-1">
+                    Enter model ID for local inference
+                  </p>
                 </div>
               </div>
             )}
