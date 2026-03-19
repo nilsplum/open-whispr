@@ -176,8 +176,8 @@ export function useUsage(): UseUsageResult | null {
   const isSubscribed = data?.isSubscribed ?? false;
   const status = data?.status ?? "active";
   const isPastDue = data?.plan === "pro" && status === "past_due";
-  const isOverLimit = !isSubscribed && limit > 0 && wordsUsed >= limit;
-  const isApproachingLimit = !isSubscribed && limit > 0 && wordsUsed >= limit * 0.8 && !isOverLimit;
+  const isOverLimit = false;
+  const isApproachingLimit = false;
 
   return {
     plan: data?.plan ?? "free",

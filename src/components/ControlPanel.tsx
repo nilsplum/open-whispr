@@ -132,27 +132,7 @@ export default function ControlPanel() {
     }
   }, [updateError, toast, t]);
 
-  useEffect(() => {
-    const dispose = window.electronAPI?.onLimitReached?.(
-      (data: { wordsUsed: number; limit: number }) => {
-        if (!hasShownUpgradePrompt.current) {
-          hasShownUpgradePrompt.current = true;
-          setLimitData(data);
-          setShowUpgradePrompt(true);
-        } else {
-          toast({
-            title: t("controlPanel.limit.weeklyTitle"),
-            description: t("controlPanel.limit.weeklyDescription"),
-            duration: 5000,
-          });
-        }
-      }
-    );
-
-    return () => {
-      dispose?.();
-    };
-  }, [toast, t]);
+  // Paywall removed: limit reached prompt disabled
 
   useEffect(() => {
     if (!usage?.isPastDue || !usage.hasLoaded) return;

@@ -1,5 +1,5 @@
 import ReasoningService from "../services/ReasoningService";
-import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl } from "../config/constants";
+import { API_ENDPOINTS, buildApiUrl, normalizeBaseUrl, OPENWHISPR_API_URL } from "../config/constants";
 import logger from "../utils/logger";
 import { isBuiltInMicrophone } from "../utils/audioDeviceUtils";
 import { isSecureEndpoint } from "../utils/urlUtils";
@@ -458,7 +458,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       const cloudTranscriptionMode = s.cloudTranscriptionMode;
       const isSignedIn = s.isSignedIn;
 
-      const isOpenWhisprCloudMode = !useLocalWhisper && cloudTranscriptionMode === "openwhispr";
+      const isOpenWhisprCloudMode = !useLocalWhisper && cloudTranscriptionMode === "openwhispr" && !!OPENWHISPR_API_URL;
       const useCloud = isOpenWhisprCloudMode && isSignedIn;
       logger.debug(
         "Transcription routing",
@@ -1954,11 +1954,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
     if (REALTIME_MODELS.has(s.cloudTranscriptionModel)) {
       if (s.cloudTranscriptionMode === "byok") return !!s.openaiApiKey;
-      if (s.cloudTranscriptionMode === "openwhispr") return !!(isSignedInOverride ?? s.isSignedIn);
+      if (s.cloudTranscriptionMode === "openwhispr") return !!(OPENWHISPR_API_URL && (isSignedInOverride ?? s.isSignedIn));
       return false;
     }
 
-    if (s.cloudTranscriptionMode !== "openwhispr" || !(isSignedInOverride ?? s.isSignedIn)) {
+    if (s.cloudTranscriptionMode !== "openwhispr" || !OPENWHISPR_API_URL || !(isSignedInOverride ?? s.isSignedIn)) {
       return false;
     }
     if (this.context === "notes") {
